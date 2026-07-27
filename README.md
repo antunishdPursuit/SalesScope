@@ -46,6 +46,24 @@ The file must include:
 
 Missing optional fields do not cause the entire upload to fail. SalesScope should complete the supported analysis and clearly list what it could not calculate and which fields would unlock those results.
 
+## Assumptions and limitations
+
+SalesScope currently makes these assumptions:
+
+- the user is a Sales Coordinator, or someone doing similar transaction-based sales reporting;
+- the upload is a `.csv` file or one sheet from an `.xlsx` workbook, not a PDF;
+- each row represents one sales transaction line;
+- every column has a unique header;
+- the file contains a transaction date and either a sales amount or both quantity and unit price;
+- reporting weeks run from Monday through Sunday; and
+- all mapped sales values use the currency selected by the user.
+
+The minimum fields support weekly sales totals and prior-week comparisons. Product, category, store, region, channel, discount, cost, and profit fields are optional. If they are missing, the upload can still be analyzed, but SalesScope cannot provide the related breakdowns or explain every performance change. Future versions will show each available, limited, and unavailable analysis with the fields needed to unlock it.
+
+This MVP does not support PDFs, images, `.xls` workbooks, multiple files at once, opportunity-pipeline data, forecasting, or automatic decisions. It also cannot determine whether two identical rows are true duplicates without a reliable transaction-line identifier, so it asks the user before excluding them.
+
+The current backend reads each upload into process memory and creates a temporary in-memory DuckDB table; it does not intentionally save the uploaded file. A production deployment still needs an approved security, retention, access-control, and privacy policy. Until then, users should not upload confidential customer information or other sensitive business data.
+
 ## Trust and cleanup rules
 
 SalesScope keeps the raw upload unchanged and creates a temporary DuckDB analysis table.

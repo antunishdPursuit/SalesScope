@@ -127,3 +127,42 @@ def test_profile_reads_the_selected_excel_sheet() -> None:
     assert body["row_count"] == 2
     assert body["suggestions"]["date"] == "transaction_date"
     assert body["suggestions"]["sales"] == "sales_amount"
+
+
+def test_profile_rejects_pdf_uploads() -> None:
+    response = client.post(
+        "/api/profile",
+        files={
+            "file": (
+                "weekly-sales.pdf",
+                BytesIO(b"%PDF-1.7"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Upload a CSV or Excel (.xlsx) file."
+
+
+def test_analyze_succeeds_without_optional_breakdown_columns() -> None:
+    data = b"""date,sales
+2026-07-06,100
+2026-07-12,200
+2026-07-13,150
+2026-07-19,250
+"""
+    response = client.post(
+        "/api/analyze",
+        files=upload(data),
+        data={
+            "date_column": "date",
+            "sales_column": "sales",
+            "currency": "USD",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["receipt"]["analyzed_rows"] == 4
+    assert body["report"]["sales_total"] == 400

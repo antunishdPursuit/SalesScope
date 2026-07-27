@@ -257,6 +257,7 @@ function App() {
   const [excludeDuplicates, setExcludeDuplicates] = useState(false)
   const [activeDimension, setActiveDimension] = useState('category')
   const [copyStatus, setCopyStatus] = useState('')
+  const [isDownloading, setIsDownloading] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
@@ -399,6 +400,7 @@ function App() {
     setExcludeDuplicates(false)
     setActiveDimension('category')
     setCopyStatus('')
+    setIsDownloading(false)
     setError('')
     fileInput.current?.focus()
   }
@@ -412,6 +414,32 @@ function App() {
       setCopyStatus('Copied')
     } catch {
       setCopyStatus('Copy failed')
+    }
+  }
+
+  async function downloadVerificationCsv() {
+    if (!analysis) return
+    setIsDownloading(true)
+    setError('')
+    try {
+      const response = await fetch(`${API_URL}/api/verification.csv`, {
+        method: 'POST',
+        body: buildAnalysisForm(),
+      })
+      if (!response.ok) throw new Error(await readError(response))
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = downloadUrl
+      anchor.download = 'salescope-verification.csv'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(downloadUrl)
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError))
+    } finally {
+      setIsDownloading(false)
     }
   }
 
@@ -690,6 +718,16 @@ function App() {
             </div>
             <div className="report-heading__actions">
               <button
+                className="button button--primary"
+                type="button"
+                onClick={() => {
+                  setView('verify')
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+              >
+                Verify calculations
+              </button>
+              <button
                 className="button button--secondary"
                 type="button"
                 onClick={() => setView('prepare')}
@@ -938,6 +976,216 @@ function App() {
           </details>
         </main>
       )}
+
+      {view === 'verify' && analysis && (
+        <main className="main-content verification-page">
+          <div className="report-heading">
+            <div>
+              <div className="eyebrow">Calculation transparency</div>
+              <h1>Verify this report yourself.</h1>
+              <p>
+                Recreate the headline results in Excel or Google Sheets using your
+                original file.
+              </p>
+            </div>
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={() => setView('report')}
+            >
+              Back to weekly report
+            </button>
+          </div>
+
+          {error && (
+            <div className="notice notice--error" role="alert">
+              <strong>We could not create the verification download.</strong>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <section className="verification-intro" aria-labelledby="verification-source-title">
+            <div>
+              <div className="eyebrow">What SalesScope used</div>
+              <h2 id="verification-source-title">Report inputs and choices</h2>
+              <p>
+                These are the exact fields, periods, and cleanup choices behind the
+                report.
+              </p>
+            </div>
+            <dl className="verification-facts">
+              <div>
+                <dt>File</dt>
+                <dd>{analysis.receipt.filename}</dd>
+              </div>
+              <div>
+                <dt>Report period</dt>
+                <dd>
+                  {formatDateRange(
+                    analysis.verification.week_start,
+                    analysis.verification.week_end,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Comparison period</dt>
+                <dd>
+                  {formatDateRange(
+                    analysis.verification.prior_week_start,
+                    analysis.verification.prior_week_end,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Date column</dt>
+                <dd><code>{analysis.verification.mappings.date}</code></dd>
+              </div>
+              <div>
+                <dt>Sales calculation</dt>
+                <dd><code>{analysis.receipt.sales_formula}</code></dd>
+              </div>
+              <div>
+                <dt>Duplicate choice</dt>
+                <dd>
+                  {analysis.receipt.excluded_duplicate_rows
+                    ? `${formatNumber(analysis.receipt.excluded_duplicate_rows)} excluded`
+                    : `${formatNumber(analysis.receipt.duplicate_candidates)} kept`}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="report-section" aria-labelledby="reconciliation-title">
+            <div className="section-title-row">
+              <div>
+                <div className="eyebrow">Row reconciliation</div>
+                <h2 id="reconciliation-title">From source file to report</h2>
+                <p>Use these counts to confirm which records reached the calculation.</p>
+              </div>
+            </div>
+            <div className="reconciliation-grid">
+              <ReconciliationItem
+                label="Original file"
+                value={analysis.verification.row_reconciliation.original_rows}
+              />
+              <ReconciliationItem
+                label="Rows analyzed"
+                value={analysis.verification.row_reconciliation.analyzed_rows}
+              />
+              <ReconciliationItem
+                label="Current report week"
+                value={analysis.verification.row_reconciliation.current_period_rows}
+              />
+              <ReconciliationItem
+                label="Prior report week"
+                value={analysis.verification.row_reconciliation.prior_period_rows}
+              />
+              <ReconciliationItem
+                label="Possible duplicates"
+                value={analysis.verification.row_reconciliation.duplicate_candidates}
+              />
+              <ReconciliationItem
+                label="Invalid rows excluded"
+                value={analysis.verification.row_reconciliation.excluded_invalid_rows}
+              />
+            </div>
+          </section>
+
+          <section className="report-section" aria-labelledby="formula-title">
+            <div className="section-title-row">
+              <div>
+                <div className="eyebrow">Metric definitions</div>
+                <h2 id="formula-title">How each number was calculated</h2>
+              </div>
+            </div>
+            <div className="formula-list">
+              {analysis.verification.formulas.map((formula) => (
+                <article className="formula-card" key={formula.key}>
+                  <div>
+                    <h3>{formula.label}</h3>
+                    <code>{formula.formula}</code>
+                    <p>{formula.explanation}</p>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Current result</dt>
+                      <dd>
+                        {formatVerificationValue(
+                          formula,
+                          formula.current_value,
+                          analysis.report.currency,
+                        )}
+                      </dd>
+                    </div>
+                    {formula.prior_value !== null && (
+                      <div>
+                        <dt>Prior result</dt>
+                        <dd>
+                          {formatVerificationValue(
+                            formula,
+                            formula.prior_value,
+                            analysis.report.currency,
+                          )}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="report-section" aria-labelledby="spreadsheet-title">
+            <div className="section-title-row">
+              <div>
+                <div className="eyebrow">Independent check</div>
+                <h2 id="spreadsheet-title">Recreate it in your spreadsheet</h2>
+                <p>
+                  Follow these steps in the original CSV opened in Excel or Google
+                  Sheets.
+                </p>
+              </div>
+            </div>
+            <ol className="verification-steps">
+              {analysis.verification.spreadsheet_steps.map((step, index) => (
+                <li key={step}>
+                  <span>{index + 1}</span>
+                  <p>{step}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <section className="verification-download" aria-labelledby="download-title">
+            <div>
+              <div className="eyebrow">Download evidence</div>
+              <h2 id="download-title">Inspect the rows behind both weeks</h2>
+              <p>
+                The verification CSV includes source-row numbers, mapped values,
+                derived sales and profit, report period, and inclusion status. It
+                contains only the current and prior report periods.
+              </p>
+            </div>
+            <button
+              className="button button--primary button--large"
+              type="button"
+              onClick={downloadVerificationCsv}
+              disabled={isDownloading}
+            >
+              {isDownloading ? 'Preparing CSV…' : 'Download verification CSV'}
+            </button>
+          </section>
+
+          <div className="verification-note">
+            <strong>This is a reproducibility guide, not an audit certification.</strong>
+            <span>
+              SalesScope does not modify your original file or hide unsupported
+              analyses. Differences should be investigated using the mappings,
+              filters, and source-row numbers shown here.
+            </span>
+          </div>
+        </main>
+      )}
     </div>
   )
 }
@@ -951,6 +1199,28 @@ function dimensionLabel(dimension: string) {
     region: 'Region',
   }
   return labels[dimension] ?? dimension
+}
+
+function formatVerificationValue(
+  formula: VerificationFormula,
+  value: number | null,
+  currency: string,
+) {
+  if (value === null) return 'Not available'
+  if (formula.key === 'margin' || formula.key === 'sales_change_pct') {
+    return formatPercent(value)
+  }
+  return formatCurrency(value, currency)
+}
+
+function ReconciliationItem({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="reconciliation-item">
+      <span>{label}</span>
+      <strong>{formatNumber(value)}</strong>
+      <small>rows</small>
+    </div>
+  )
 }
 
 function KpiCard({

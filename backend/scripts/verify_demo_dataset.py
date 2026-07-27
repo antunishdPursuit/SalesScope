@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -57,6 +58,15 @@ def main() -> None:
     analysis_response.raise_for_status()
     result = analysis_response.json()
 
+    with sales_path.open("rb") as sales_file:
+        verification_response = client.post(
+            "/api/verification.csv",
+            files={"file": (sales_path.name, sales_file, "text/csv")},
+            data=analysis_form,
+        )
+    verification_response.raise_for_status()
+    verification_rows = pd.read_csv(BytesIO(verification_response.content))
+
     source = pd.read_csv(sales_path, low_memory=False).drop_duplicates()
     source["date"] = pd.to_datetime(source["date"], errors="coerce")
     source["total_value"] = pd.to_numeric(source["total_value"], errors="coerce")
@@ -82,6 +92,15 @@ def main() -> None:
     assert result["report"]["week_start"] == week_start.date().isoformat()
     assert result["report"]["week_end"] == week_end.date().isoformat()
     assert math.isclose(actual, expected, abs_tol=0.01)
+    exported_current = verification_rows[
+        (verification_rows["report_period"] == "current")
+        & (verification_rows["analysis_status"] == "included")
+    ]
+    assert math.isclose(
+        float(exported_current["sales_amount"].sum()),
+        expected,
+        abs_tol=0.01,
+    )
 
     expected_profit = None
     actual_profit = result["report"]["metrics"]["profit"]["current"]
@@ -95,6 +114,11 @@ def main() -> None:
         )
         assert actual_profit is not None
         assert math.isclose(float(actual_profit), expected_profit, abs_tol=0.01)
+        assert math.isclose(
+            float(exported_current["profit"].sum()),
+            expected_profit,
+            abs_tol=0.01,
+        )
 
     for dimension, rows in result["report"]["breakdowns"].items():
         assert math.isclose(
@@ -115,6 +139,7 @@ def main() -> None:
         "available_breakdowns="
         + ",".join(result["report"]["breakdowns"].keys())
     )
+    print(f"verification_export_rows={len(verification_rows)}")
     print("verification=passed")
 
 

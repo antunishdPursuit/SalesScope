@@ -203,6 +203,27 @@ npm.cmd run dev
 
 Expected result: open `http://localhost:5173`.
 
+## Deployment settings
+
+SalesScope can deploy as two native Render services without Docker:
+
+- a Python web service rooted at `backend`; and
+- a static site rooted at `frontend`.
+
+The backend accepts these environment variables:
+
+- `MAX_UPLOAD_MB` controls the server-side upload limit and defaults to `100`;
+- `CORS_ORIGINS` is a comma-separated list of deployed frontend addresses.
+
+The frontend accepts these build-time environment variables:
+
+- `VITE_API_URL` points to the deployed backend;
+- `VITE_MAX_UPLOAD_MB` displays and enforces the matching browser-side limit.
+
+For the free public demo, set both upload-limit variables to `5`. Keep the
+local defaults at `100`. Public-demo users should upload only fictional or
+non-sensitive data.
+
 ## Verify
 
 Run backend tests:

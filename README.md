@@ -2,6 +2,23 @@
 
 SalesScope helps transaction-based Sales Coordinators turn CSV or Excel exports into a clear, trustworthy weekly sales report.
 
+## Try the live demo
+
+Open the [SalesScope live demo](https://salesscope-bs61.onrender.com) and use one of the fictional datasets included in this repository:
+
+- [Download the small sample dataset](https://raw.githubusercontent.com/antunishdPursuit/SalesScope/main/examples/sample-sales.csv) for a quick test.
+- [Download the representative dataset](https://raw.githubusercontent.com/antunishdPursuit/SalesScope/main/examples/representative-sales.csv) for a more realistic report with 53,479 transaction rows.
+
+To try the complete workflow:
+
+1. Download one of the datasets above.
+2. Open the live demo and select the downloaded CSV file.
+3. Review the suggested column mappings and cleanup choices.
+4. Create the report to see weekly sales, comparisons, performance breakdowns, risks, and a manager summary.
+5. Open **Verify calculations** to review the formulas, row counts, and spreadsheet verification steps.
+
+The free demo can take up to a minute to wake up after a period of inactivity. Use only fictional or non-sensitive data.
+
 ## The problem
 
 Marcus is a Sales Coordinator at a retail company. Every Monday, he exports raw order data, pastes it into a spreadsheet, sorts and compares the rows, writes a summary, and sends it to regional managers. The same process takes more than three hours each week. When a manager asks why performance changed, Marcus must search through rows instead of getting a direct answer.

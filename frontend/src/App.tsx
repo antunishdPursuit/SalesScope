@@ -216,6 +216,19 @@ function formatCurrency(value: number, currency: string) {
   }).format(value)
 }
 
+function formatCompactCurrency(value: number, currency: string) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function formatPercent(value: number) {
+  return `${formatNumber(value, 1)}%`
+}
+
 function formatDateRange(start: string, end: string) {
   const dateFormatter = new Intl.DateTimeFormat('en-US', {
     month: 'short',
@@ -242,6 +255,8 @@ function App() {
   const [mappings, setMappings] = useState<Mappings>(emptyMappings)
   const [currency, setCurrency] = useState('USD')
   const [excludeDuplicates, setExcludeDuplicates] = useState(false)
+  const [activeDimension, setActiveDimension] = useState('category')
+  const [copyStatus, setCopyStatus] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
@@ -355,6 +370,11 @@ function App() {
       if (!response.ok) throw new Error(await readError(response))
       const nextAnalysis: Analysis = await response.json()
       setAnalysis(nextAnalysis)
+      setActiveDimension(
+        ['category', 'store', 'product', 'channel', 'region'].find(
+          (dimension) => nextAnalysis.report.breakdowns[dimension]?.length,
+        ) ?? '',
+      )
       setView('report')
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (caughtError) {
@@ -377,8 +397,22 @@ function App() {
     setMappings(emptyMappings)
     setCurrency('USD')
     setExcludeDuplicates(false)
+    setActiveDimension('category')
+    setCopyStatus('')
     setError('')
     fileInput.current?.focus()
+  }
+
+  async function copyManagerSummary() {
+    if (!analysis) return
+    try {
+      await navigator.clipboard.writeText(
+        analysis.report.manager_summary.join(' '),
+      )
+      setCopyStatus('Copied')
+    } catch {
+      setCopyStatus('Copy failed')
+    }
   }
 
   return (
@@ -640,7 +674,7 @@ function App() {
 
       {view === 'report' && analysis && (
         <main className="main-content report-page">
-          <div className="page-heading">
+          <div className="report-heading">
             <div>
               <div className="eyebrow">Weekly sales report</div>
               <h1>
@@ -654,38 +688,494 @@ function App() {
                 {analysis.receipt.filename}.
               </p>
             </div>
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => setView('prepare')}
-            >
-              Review data setup
-            </button>
+            <div className="report-heading__actions">
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => setView('prepare')}
+              >
+                Review data setup
+              </button>
+              <button className="button button--secondary" type="button" onClick={reset}>
+                Analyze another file
+              </button>
+            </div>
           </div>
 
-          <div className="metric-card">
-            <span className="metric-card__label">Total sales</span>
-            <strong>
-              {formatCurrency(
-                analysis.report.metrics.sales.current ?? 0,
-                analysis.report.currency,
+          <section className="kpi-grid" aria-label="Weekly performance summary">
+            <KpiCard
+              label="Total sales"
+              metric={analysis.report.metrics.sales}
+              format={(value) => formatCurrency(value, analysis.report.currency)}
+            />
+            {analysis.report.metrics.profit.current !== null && (
+              <KpiCard
+                label="Profit"
+                metric={analysis.report.metrics.profit}
+                format={(value) => formatCurrency(value, analysis.report.currency)}
+              />
+            )}
+            {analysis.report.metrics.margin.current !== null && (
+              <KpiCard
+                label="Profit margin"
+                metric={analysis.report.metrics.margin}
+                format={formatPercent}
+                changeAsPoints
+              />
+            )}
+            {analysis.report.metrics.units.current !== null && (
+              <KpiCard
+                label="Units sold"
+                metric={analysis.report.metrics.units}
+                format={(value) => formatNumber(value)}
+              />
+            )}
+          </section>
+
+          <section className="summary-card" aria-labelledby="manager-summary-title">
+            <div className="section-title-row">
+              <div>
+                <div className="eyebrow">Manager-ready summary</div>
+                <h2 id="manager-summary-title">What changed this week</h2>
+              </div>
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={copyManagerSummary}
+              >
+                {copyStatus || 'Copy summary'}
+              </button>
+            </div>
+            <div className="summary-text">
+              {analysis.report.manager_summary.map((sentence) => (
+                <p key={sentence}>{sentence}</p>
+              ))}
+            </div>
+          </section>
+
+          {analysis.report.trend.length > 1 && (
+            <section className="report-section" aria-labelledby="trend-title">
+              <div className="section-title-row">
+                <div>
+                  <div className="eyebrow">Movement</div>
+                  <h2 id="trend-title">Eight-week sales trend</h2>
+                  <p>Complete Monday-through-Sunday reporting periods.</p>
+                </div>
+              </div>
+              <TrendChart
+                rows={analysis.report.trend}
+                currency={analysis.report.currency}
+              />
+            </section>
+          )}
+
+          {Object.keys(analysis.report.breakdowns).length > 0 && activeDimension && (
+            <section className="report-section" aria-labelledby="drivers-title">
+              <div className="section-title-row">
+                <div>
+                  <div className="eyebrow">Performance drivers</div>
+                  <h2 id="drivers-title">What moved sales</h2>
+                  <p>
+                    Compare the current report week with the preceding complete week.
+                  </p>
+                </div>
+              </div>
+
+              <div className="dimension-tabs" role="tablist" aria-label="Sales breakdown">
+                {Object.keys(analysis.report.breakdowns).map((dimension) => (
+                  <button
+                    key={dimension}
+                    className={activeDimension === dimension ? 'is-active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDimension === dimension}
+                    onClick={() => setActiveDimension(dimension)}
+                  >
+                    {dimensionLabel(dimension)}
+                  </button>
+                ))}
+              </div>
+
+              <div className="driver-grid">
+                <DriverList
+                  title="Largest increases"
+                  rows={
+                    analysis.report.drivers[activeDimension]?.increases ?? []
+                  }
+                  currency={analysis.report.currency}
+                  emptyText="No increases were found for this breakdown."
+                />
+                <DriverList
+                  title="Largest declines"
+                  rows={analysis.report.drivers[activeDimension]?.declines ?? []}
+                  currency={analysis.report.currency}
+                  emptyText="No declines were found for this breakdown."
+                  decline
+                />
+              </div>
+
+              <BreakdownTable
+                dimension={activeDimension}
+                rows={analysis.report.breakdowns[activeDimension] ?? []}
+                currency={analysis.report.currency}
+              />
+            </section>
+          )}
+
+          {(analysis.report.discount_summary || analysis.report.risks.length > 0) && (
+            <section className="report-section" aria-labelledby="risk-title">
+              <div className="section-title-row">
+                <div>
+                  <div className="eyebrow">Margin and discount review</div>
+                  <h2 id="risk-title">Items that need attention</h2>
+                  <p>
+                    Transparent checks based on the mapped discount and profit fields.
+                  </p>
+                </div>
+              </div>
+
+              {analysis.report.discount_summary && (
+                <div className="supporting-metrics">
+                  <div>
+                    <span>Discounted sales share</span>
+                    <strong>
+                      {analysis.report.discount_summary.discounted_sales_share_pct ===
+                      null
+                        ? 'Unavailable'
+                        : formatPercent(
+                            analysis.report.discount_summary
+                              .discounted_sales_share_pct,
+                          )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Average discount</span>
+                    <strong>
+                      {analysis.report.discount_summary.average_discount_pct === null
+                        ? 'Unavailable'
+                        : formatPercent(
+                            analysis.report.discount_summary.average_discount_pct,
+                          )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>High-discount rows</span>
+                    <strong>
+                      {formatNumber(
+                        analysis.report.discount_summary.high_discount_rows,
+                      )}
+                    </strong>
+                  </div>
+                </div>
               )}
-            </strong>
-            <p>
-              {formatNumber(analysis.report.metrics.sales_rows.current ?? 0)} sales
-              rows were included.
-            </p>
-          </div>
 
-          <div className="notice notice--info">
-            <strong>Detailed report is next.</strong>
-            <span>
-              The preparation workflow now leads directly to a valid result. The
-              report dashboard will be added in the next focused commit.
-            </span>
-          </div>
+              {analysis.report.risks.length > 0 ? (
+                <div className="risk-list">
+                  {analysis.report.risks.map((risk) => (
+                    <article className={`risk-item risk-item--${risk.severity}`} key={risk.key}>
+                      <h3>{risk.title}</h3>
+                      <p>{risk.detail}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-message">
+                  No negative-profit or high-discount warnings were found.
+                </p>
+              )}
+            </section>
+          )}
+
+          <section className="report-section" aria-labelledby="coverage-title">
+            <div className="section-title-row">
+              <div>
+                <div className="eyebrow">Analysis coverage</div>
+                <h2 id="coverage-title">What this file could answer</h2>
+              </div>
+            </div>
+            <div className="coverage-list">
+              {analysis.report.coverage.map((item) => (
+                <div className="coverage-item" key={item.key}>
+                  <span className={`coverage-status coverage-status--${item.status}`}>
+                    {item.status}
+                  </span>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <p>{item.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <details className="quality-details">
+            <summary>Data quality and report assumptions</summary>
+            <div className="quality-grid">
+              <dl>
+                <div>
+                  <dt>Original rows</dt>
+                  <dd>{formatNumber(analysis.receipt.original_rows)}</dd>
+                </div>
+                <div>
+                  <dt>Rows analyzed</dt>
+                  <dd>{formatNumber(analysis.receipt.analyzed_rows)}</dd>
+                </div>
+                <div>
+                  <dt>Possible duplicates</dt>
+                  <dd>{formatNumber(analysis.receipt.duplicate_candidates)}</dd>
+                </div>
+                <div>
+                  <dt>Invalid rows excluded</dt>
+                  <dd>{formatNumber(analysis.receipt.excluded_invalid_rows)}</dd>
+                </div>
+              </dl>
+              <ul>
+                {analysis.receipt.assumptions.map((assumption) => (
+                  <li key={assumption}>{assumption}</li>
+                ))}
+              </ul>
+            </div>
+          </details>
         </main>
       )}
+    </div>
+  )
+}
+
+function dimensionLabel(dimension: string) {
+  const labels: Record<string, string> = {
+    category: 'Category',
+    store: 'Store',
+    product: 'Product',
+    channel: 'Channel',
+    region: 'Region',
+  }
+  return labels[dimension] ?? dimension
+}
+
+function KpiCard({
+  label,
+  metric,
+  format,
+  changeAsPoints = false,
+}: {
+  label: string
+  metric: Metric
+  format: (value: number) => string
+  changeAsPoints?: boolean
+}) {
+  const change = changeAsPoints
+    ? metric.absolute_change
+    : metric.percentage_change
+  return (
+    <article className="kpi-card">
+      <span>{label}</span>
+      <strong>{format(metric.current ?? 0)}</strong>
+      {change === null ? (
+        <small>No complete prior-week comparison</small>
+      ) : (
+        <small className={change >= 0 ? 'is-positive' : 'is-negative'}>
+          {change >= 0 ? '↑' : '↓'} {formatNumber(Math.abs(change), 1)}
+          {changeAsPoints ? ' pts' : '%'} from prior week
+        </small>
+      )}
+    </article>
+  )
+}
+
+function TrendChart({ rows, currency }: { rows: TrendRow[]; currency: string }) {
+  const width = 760
+  const height = 240
+  const left = 54
+  const right = 20
+  const top = 22
+  const bottom = 44
+  const chartWidth = width - left - right
+  const chartHeight = height - top - bottom
+  const values = rows.flatMap((row) =>
+    row.profit === null ? [row.sales] : [row.sales, row.profit],
+  )
+  const maximum = Math.max(...values, 1)
+  const point = (value: number, index: number) => {
+    const x =
+      left + (rows.length === 1 ? 0 : (index / (rows.length - 1)) * chartWidth)
+    const y = top + chartHeight - (value / maximum) * chartHeight
+    return { x, y }
+  }
+  const salesPath = rows
+    .map((row, index) => {
+      const { x, y } = point(row.sales, index)
+      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+    })
+    .join(' ')
+  const profitRows = rows.filter((row) => row.profit !== null)
+  const profitPath =
+    profitRows.length === rows.length
+      ? rows
+          .map((row, index) => {
+            const { x, y } = point(row.profit ?? 0, index)
+            return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+          })
+          .join(' ')
+      : ''
+
+  return (
+    <div className="trend-chart">
+      <div className="chart-legend" aria-hidden="true">
+        <span><i className="sales-line" />Sales</span>
+        {profitPath && <span><i className="profit-line" />Profit</span>}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`Weekly sales trend from ${formatDateRange(
+          rows[0].week_start,
+          rows[rows.length - 1].week_end,
+        )}`}
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const y = top + chartHeight - ratio * chartHeight
+          return (
+            <g key={ratio}>
+              <line className="chart-gridline" x1={left} x2={width - right} y1={y} y2={y} />
+              <text className="chart-axis-label" x={left - 8} y={y + 4} textAnchor="end">
+                {formatCompactCurrency(maximum * ratio, currency)}
+              </text>
+            </g>
+          )
+        })}
+        <path className="chart-line chart-line--sales" d={salesPath} />
+        {profitPath && <path className="chart-line chart-line--profit" d={profitPath} />}
+        {rows.map((row, index) => {
+          const salesPoint = point(row.sales, index)
+          return (
+            <g key={row.week_start}>
+              <circle className="chart-point chart-point--sales" cx={salesPoint.x} cy={salesPoint.y} r="4">
+                <title>{`${formatDateRange(row.week_start, row.week_end)}: ${formatCurrency(row.sales, currency)} sales`}</title>
+              </circle>
+              {row.profit !== null && (
+                <circle
+                  className="chart-point chart-point--profit"
+                  cx={point(row.profit, index).x}
+                  cy={point(row.profit, index).y}
+                  r="4"
+                >
+                  <title>{`${formatDateRange(row.week_start, row.week_end)}: ${formatCurrency(row.profit, currency)} profit`}</title>
+                </circle>
+              )}
+              {(index === 0 || index === rows.length - 1) && (
+                <text
+                  className="chart-axis-label"
+                  x={salesPoint.x}
+                  y={height - 14}
+                  textAnchor={index === 0 ? 'start' : 'end'}
+                >
+                  {new Intl.DateTimeFormat('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    timeZone: 'UTC',
+                  }).format(new Date(`${row.week_start}T00:00:00Z`))}
+                </text>
+              )}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+function DriverList({
+  title,
+  rows,
+  currency,
+  emptyText,
+  decline = false,
+}: {
+  title: string
+  rows: BreakdownRow[]
+  currency: string
+  emptyText: string
+  decline?: boolean
+}) {
+  return (
+    <article className="driver-card">
+      <h3>{title}</h3>
+      {rows.length ? (
+        <ol>
+          {rows.slice(0, 5).map((row) => (
+            <li key={row.label}>
+              <span>{row.label}</span>
+              <strong className={decline ? 'is-negative' : 'is-positive'}>
+                {decline ? '−' : '+'}
+                {formatCurrency(Math.abs(row.sales_change), currency)}
+              </strong>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="empty-message">{emptyText}</p>
+      )}
+    </article>
+  )
+}
+
+function BreakdownTable({
+  dimension,
+  rows,
+  currency,
+}: {
+  dimension: string
+  rows: BreakdownRow[]
+  currency: string
+}) {
+  const maximumSales = Math.max(...rows.map((row) => row.current_sales), 1)
+  const hasProfit = rows.some((row) => row.current_profit !== null)
+  return (
+    <div className="table-wrap">
+      <table>
+        <caption>Top {dimensionLabel(dimension).toLowerCase()} results by current sales</caption>
+        <thead>
+          <tr>
+            <th scope="col">{dimensionLabel(dimension)}</th>
+            <th scope="col">Current sales</th>
+            <th scope="col">Prior sales</th>
+            <th scope="col">Change</th>
+            {hasProfit && <th scope="col">Profit</th>}
+            {hasProfit && <th scope="col">Margin</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 10).map((row) => (
+            <tr key={row.label}>
+              <th scope="row">
+                <span>{row.label}</span>
+                <i
+                  className="value-bar"
+                  style={{ width: `${(row.current_sales / maximumSales) * 100}%` }}
+                  aria-hidden="true"
+                />
+              </th>
+              <td>{formatCurrency(row.current_sales, currency)}</td>
+              <td>{formatCurrency(row.prior_sales, currency)}</td>
+              <td className={row.sales_change >= 0 ? 'is-positive' : 'is-negative'}>
+                {row.sales_change >= 0 ? '+' : '−'}
+                {formatCurrency(Math.abs(row.sales_change), currency)}
+              </td>
+              {hasProfit && (
+                <td>
+                  {row.current_profit === null
+                    ? '—'
+                    : formatCurrency(row.current_profit, currency)}
+                </td>
+              )}
+              {hasProfit && (
+                <td>{row.margin_pct === null ? '—' : formatPercent(row.margin_pct)}</td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

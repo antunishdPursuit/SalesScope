@@ -12,11 +12,9 @@ Our problem statement is:
 
 SalesScope does not try to replace a full business-intelligence platform. It focuses on Marcus’s repeated Monday workflow:
 
-1. upload a sales export;
-2. confirm what the columns mean;
-3. review data-quality findings and cleanup choices;
-4. receive the analysis the file can support;
-5. prepare a manager-ready summary.
+1. prepare the report on one page by uploading a sales export, confirming column meanings, and choosing cleanup rules;
+2. receive the analysis the file can support; and
+3. optionally verify the report with formulas, row counts, spreadsheet steps, and a downloadable evidence file.
 
 ## Who it is for
 
@@ -58,7 +56,7 @@ SalesScope currently makes these assumptions:
 - reporting weeks run from Monday through Sunday; and
 - all mapped sales values use the currency selected by the user.
 
-The minimum fields support weekly sales totals and prior-week comparisons. Product, category, store, region, channel, discount, cost, and profit fields are optional. If they are missing, the upload can still be analyzed, but SalesScope cannot provide the related breakdowns or explain every performance change. Future versions will show each available, limited, and unavailable analysis with the fields needed to unlock it.
+The minimum fields support weekly sales totals and prior-week comparisons. Product, category, store, region, channel, discount, cost, and profit fields are optional. If they are missing, the upload can still be analyzed, but SalesScope labels the related analysis as limited or unavailable and identifies the fields needed to unlock it.
 
 This MVP does not support PDFs, images, `.xls` workbooks, multiple files at once, opportunity-pipeline data, forecasting, or automatic decisions. It also cannot determine whether two identical rows are true duplicates without a reliable transaction-line identifier, so it asks the user before excluding them.
 
@@ -80,21 +78,25 @@ The product must report:
 
 SalesScope does not silently remove repeated rows. If the file has no reliable transaction-line identifier, identical rows are only possible duplicates. The user chooses whether to include or exclude them.
 
-## Current working slice
+## Current MVP
 
-The first vertical slice supports:
+The working MVP supports:
 
 - CSV and Excel uploads up to 100 MB;
 - Excel sheet selection;
-- automatic matching for common date, sales, quantity, and unit-price headers;
+- one preparation page for upload, column mapping, cleanup choices, and report readiness;
+- automatic matching for common required and optional sales fields;
 - manual correction of those mappings;
 - user-controlled exclusion of possible duplicate rows;
 - invalid-date and invalid-sales reporting;
-- a transparent data-quality receipt;
-- the latest complete Monday-through-Sunday sales total;
-- a prior-week comparison.
-
-Product, store, category, channel, discount, cost, profit, margin, risk findings, and manager-summary features are planned next.
+- the latest complete Monday-through-Sunday period and prior-week comparison;
+- sales, profit, profit margin, and units-sold headline metrics when supported;
+- an eight-week sales trend;
+- category, store, product, channel, and region breakdowns when supported;
+- performance drivers, discount findings, and risk flags;
+- a rule-based manager summary;
+- clear available, limited, and unavailable analysis coverage; and
+- an optional verification page with formulas, row reconciliation, independent spreadsheet steps, and a downloadable verification CSV.
 
 ## Demo dataset
 
@@ -121,7 +123,18 @@ Sales Coordinator Dataset/
     bm_promotions.csv
 ```
 
-The verified latest complete week in `bm_sales.csv` is October 20–26, 2025. After excluding the 45 possible duplicate rows with confirmation, both the API and an independent calculation return **$176,838.39** in sales.
+Create the enriched local upload used for the full report:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\prepare_demo_upload.py "..\Sales Coordinator Dataset\source"
+```
+
+The script joins the sales, product, and store tables without changing the number of sales rows. It writes `Sales Coordinator Dataset/demo_sales_enriched.csv`, which remains excluded from Git because it is about 95 MB.
+
+The verified latest complete week is October 20–26, 2025. With the 45 possible duplicate rows kept, the API and an independent calculation both return **$176,838.39** in sales and **$59,671.67** in profit.
+
+For a quick public demo, upload [`examples/sample-sales.csv`](examples/sample-sales.csv). It contains fictional transaction rows and all optional fields needed to exercise the main report sections.
 
 ## Architecture
 
@@ -137,7 +150,7 @@ FastAPI
 DuckDB
 ```
 
-- The React interface manages upload, mapping, review, and report steps.
+- The React interface manages report preparation, reporting, and optional verification.
 - FastAPI validates requests and returns the data-quality receipt and report.
 - DuckDB performs the weekly aggregation.
 - Pandas reads CSV and Excel inputs before they are registered with DuckDB.
@@ -146,9 +159,13 @@ DuckDB
 
 ```text
 backend/
+  app/analysis.py
   app/main.py
+  scripts/prepare_demo_upload.py
   scripts/verify_demo_dataset.py
   tests/test_api.py
+examples/
+  sample-sales.csv
 frontend/
   src/App.tsx
   src/index.css
@@ -203,14 +220,14 @@ npm.cmd run build
 npm.cmd run lint
 ```
 
-Verify the full local demo dataset:
+Verify the full enriched local demo dataset:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe scripts\verify_demo_dataset.py "<path-to-bm_sales.csv>"
+.\.venv\Scripts\python.exe scripts\verify_demo_dataset.py "..\Sales Coordinator Dataset\demo_sales_enriched.csv"
 ```
 
-Replace `<path-to-bm_sales.csv>` with the full path to the downloaded sales CSV. The script compares the API result with a separate Pandas calculation.
+The script compares sales and profit totals with separate Pandas calculations, confirms each available breakdown reconciles to the headline result, downloads the verification CSV, and checks its included rows.
 
 ## Commit workflow
 
@@ -220,9 +237,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit scale and branch workflow.
 
 ## Next steps
 
-1. Create a flat demo upload by joining sales, product, and store data.
-2. Add mapping and coverage rules for the optional analysis fields.
-3. Add weekly product, category, store, and channel breakdowns.
-4. Add discount, profit, margin, and risk findings.
-5. Generate a transparent rule-based manager summary.
-6. Test the complete flow with partial and complete datasets.
+1. Run usability tests with Sales Coordinators and revise labels or report order based on observed confusion.
+2. Add saved report history only after defining authentication, access control, retention, and privacy requirements.
+3. Add configurable reporting periods after validating that Monday-through-Sunday is too restrictive for target users.
+4. Add export of the manager summary and report visuals.
+5. Prepare a production deployment and repeat the full upload, calculation, verification, accessibility, and responsive test suite.

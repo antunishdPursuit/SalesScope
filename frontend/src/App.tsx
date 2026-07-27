@@ -248,6 +248,15 @@ function formatDateRange(start: string, end: string) {
 }
 
 function getErrorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    /networkerror|failed to fetch|load failed/i.test(error.message)
+  ) {
+    return (
+      'The analysis service became unavailable while processing this file. ' +
+      'Try the representative demo file or a smaller upload.'
+    )
+  }
   if (error instanceof Error) return error.message
   return 'Something went wrong. Please try again.'
 }

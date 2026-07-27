@@ -18,6 +18,7 @@ backend/**/__pycache__/
 # Full demo data stays local. Track the audit code and notebook only.
 Sales Coordinator Dataset/source/
 Sales Coordinator Dataset/*.zip
+Sales Coordinator Dataset/demo_sales_enriched.csv
 
 # Editors and operating systems
 .idea/

@@ -1,0 +1,26 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Backend
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+*.pyc
+
+# Local analysis files
+*.duckdb
+*.duckdb.wal
+.env
+.run/
+
+# Full demo data stays local. Track the audit code and notebook only.
+Sales Coordinator Dataset/source/
+Sales Coordinator Dataset/*.zip
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

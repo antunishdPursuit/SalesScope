@@ -220,9 +220,11 @@ The frontend accepts these build-time environment variables:
 - `VITE_API_URL` points to the deployed backend;
 - `VITE_MAX_UPLOAD_MB` displays and enforces the matching browser-side limit.
 
-For the free public demo, set both upload-limit variables to `5`. Keep the
-local defaults at `100`. Public-demo users should upload only fictional or
-non-sensitive data.
+For the free public demo, set both upload-limit variables to `40`. This covers
+the 31.22 MiB raw `bm_sales.csv` file with some upload headroom. It does not
+cover the 90.7 MiB enriched demo file, which is more likely to exhaust the free
+service's memory while Pandas and DuckDB process it. Keep the local defaults at
+`100`. Public-demo users should upload only fictional or non-sensitive data.
 
 ## Verify
 

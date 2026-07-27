@@ -67,7 +67,10 @@ def main() -> None:
     verification_response.raise_for_status()
     verification_rows = pd.read_csv(BytesIO(verification_response.content))
 
-    source = pd.read_csv(sales_path, low_memory=False).drop_duplicates()
+    raw_source = pd.read_csv(sales_path, low_memory=False)
+    expected_rows = len(raw_source)
+    expected_duplicate_candidates = int(raw_source.duplicated().sum())
+    source = raw_source.drop_duplicates()
     source["date"] = pd.to_datetime(source["date"], errors="coerce")
     source["total_value"] = pd.to_numeric(source["total_value"], errors="coerce")
     source = source.dropna(subset=["date", "total_value"])
@@ -86,9 +89,12 @@ def main() -> None:
     )
     actual = float(result["report"]["metrics"]["sales"]["current"])
 
-    assert profile["row_count"] == 641_843
-    assert profile["exact_duplicate_candidates"] == 45
-    assert result["receipt"]["excluded_duplicate_rows"] == 45
+    assert profile["row_count"] == expected_rows
+    assert profile["exact_duplicate_candidates"] == expected_duplicate_candidates
+    assert (
+        result["receipt"]["excluded_duplicate_rows"]
+        == expected_duplicate_candidates
+    )
     assert result["report"]["week_start"] == week_start.date().isoformat()
     assert result["report"]["week_end"] == week_end.date().isoformat()
     assert math.isclose(actual, expected, abs_tol=0.01)

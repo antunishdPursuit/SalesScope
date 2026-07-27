@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
@@ -17,8 +18,9 @@ from app.analysis import (
     verification_export,
 )
 
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_MB = 100
 SUPPORTED_SUFFIXES = {".csv", ".xlsx"}
+LOCAL_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
 COLUMN_ALIASES = {
     "date": (
@@ -73,6 +75,24 @@ def normalize_header(value: str) -> str:
     return "".join(character for character in value.lower() if character.isalnum())
 
 
+def configured_max_upload_mb() -> int:
+    raw_value = os.getenv("MAX_UPLOAD_MB", str(DEFAULT_MAX_UPLOAD_MB))
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return DEFAULT_MAX_UPLOAD_MB
+    return value if value > 0 else DEFAULT_MAX_UPLOAD_MB
+
+
+def configured_cors_origins() -> list[str]:
+    configured = [
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    return [*LOCAL_ORIGINS, *configured]
+
+
 def suggest_columns(columns: list[str]) -> dict[str, str | None]:
     normalized = {column: normalize_header(column) for column in columns}
     suggestions: dict[str, str | None] = {}
@@ -101,10 +121,13 @@ async def read_upload(upload: UploadFile) -> tuple[bytes, str]:
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    if len(data) > MAX_UPLOAD_BYTES:
+    max_upload_mb = configured_max_upload_mb()
+    if len(data) > max_upload_mb * 1024 * 1024:
         raise HTTPException(
             status_code=413,
-            detail="The uploaded file is larger than the 100 MB MVP limit.",
+            detail=(
+                f"The uploaded file is larger than the {max_upload_mb} MB limit."
+            ),
         )
     return data, suffix
 
@@ -228,7 +251,7 @@ def mappings_from_form(
 app = FastAPI(title="SalesScope API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=configured_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

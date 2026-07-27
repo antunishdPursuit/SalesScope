@@ -3,6 +3,12 @@ import type { ChangeEvent, FormEvent } from 'react'
 import './index.css'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const configuredMaxUploadMb = Number(import.meta.env.VITE_MAX_UPLOAD_MB ?? 100)
+const MAX_UPLOAD_MB =
+  Number.isFinite(configuredMaxUploadMb) && configuredMaxUploadMb > 0
+    ? configuredMaxUploadMb
+    : 100
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 type MappingKey =
   | 'date'
@@ -307,6 +313,15 @@ function App() {
     const selectedFile = event.target.files?.[0]
     if (!selectedFile) return
 
+    if (selectedFile.size > MAX_UPLOAD_BYTES) {
+      setFile(null)
+      setProfile(null)
+      setAnalysis(null)
+      setError(`Choose a file smaller than ${MAX_UPLOAD_MB} MB.`)
+      event.target.value = ''
+      return
+    }
+
     setIsLoading(true)
     setError('')
     setAnalysis(null)
@@ -491,7 +506,9 @@ function App() {
 
               <div className="upload-zone">
                 <label htmlFor="sales-file">Upload sales file</label>
-                <p>Choose one CSV or Excel (.xlsx) file, up to 100 MB.</p>
+                <p>
+                  Choose one CSV or Excel (.xlsx) file, up to {MAX_UPLOAD_MB} MB.
+                </p>
                 <button
                   className="button button--primary"
                   type="button"
@@ -511,7 +528,8 @@ function App() {
 
               <p className="privacy-note">
                 Your original file stays unchanged. This MVP processes uploads
-                temporarily and does not save report history.
+                temporarily and does not save report history. On the public
+                demo, use sample or non-sensitive data only.
               </p>
             </section>
           ) : (

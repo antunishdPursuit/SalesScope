@@ -3,7 +3,7 @@ from io import BytesIO
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, configured_cors_origins
 
 client = TestClient(app)
 
@@ -143,6 +143,38 @@ def test_profile_rejects_pdf_uploads() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Upload a CSV or Excel (.xlsx) file."
+
+
+def test_profile_uses_the_configured_upload_limit(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_MB", "1")
+    response = client.post(
+        "/api/profile",
+        files={
+            "file": (
+                "oversized.csv",
+                BytesIO(b"x" * (1024 * 1024 + 1)),
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "The uploaded file is larger than the 1 MB limit."
+    )
+
+
+def test_cors_origins_include_the_deployed_frontend(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "CORS_ORIGINS",
+        "https://salescope.onrender.com, https://preview.example.com",
+    )
+
+    origins = configured_cors_origins()
+
+    assert "http://localhost:5173" in origins
+    assert "https://salescope.onrender.com" in origins
+    assert "https://preview.example.com" in origins
 
 
 def test_analyze_succeeds_without_optional_breakdown_columns() -> None:

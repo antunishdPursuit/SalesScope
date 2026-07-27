@@ -4,12 +4,22 @@ import './index.css'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
-type Suggestions = {
-  date: string | null
-  sales: string | null
-  quantity: string | null
-  unit_price: string | null
-}
+type MappingKey =
+  | 'date'
+  | 'sales'
+  | 'quantity'
+  | 'unit_price'
+  | 'product'
+  | 'category'
+  | 'store'
+  | 'channel'
+  | 'region'
+  | 'discount'
+  | 'cost'
+  | 'profit'
+
+type Suggestions = Record<MappingKey, string | null>
+type Mappings = Record<MappingKey, string>
 
 type Profile = {
   filename: string
@@ -23,6 +33,74 @@ type Profile = {
   exact_duplicate_candidates: number
 }
 
+type Metric = {
+  current: number | null
+  prior: number | null
+  absolute_change: number | null
+  percentage_change: number | null
+}
+
+type TrendRow = {
+  week_start: string
+  week_end: string
+  sales: number
+  profit: number | null
+  units: number | null
+}
+
+type BreakdownRow = {
+  label: string
+  current_sales: number
+  prior_sales: number
+  sales_change: number
+  sales_change_pct: number | null
+  current_profit: number | null
+  margin_pct: number | null
+  current_units: number | null
+}
+
+type CoverageItem = {
+  key: string
+  label: string
+  status: 'available' | 'limited' | 'unavailable'
+  reason: string
+}
+
+type Report = {
+  currency: string
+  week_start: string
+  week_end: string
+  prior_week_start: string
+  prior_week_end: string
+  metrics: {
+    sales: Metric
+    profit: Metric
+    margin: Metric
+    units: Metric
+    sales_rows: Metric
+  }
+  trend: TrendRow[]
+  breakdowns: Record<string, BreakdownRow[]>
+  drivers: Record<
+    string,
+    { increases: BreakdownRow[]; declines: BreakdownRow[] }
+  >
+  discount_summary: {
+    discounted_sales: number
+    discounted_sales_share_pct: number | null
+    average_discount_pct: number | null
+    high_discount_rows: number
+  } | null
+  risks: Array<{
+    key: string
+    severity: 'warning' | 'info'
+    title: string
+    detail: string
+  }>
+  manager_summary: string[]
+  coverage: CoverageItem[]
+}
+
 type Receipt = {
   filename: string
   original_rows: number
@@ -33,34 +111,101 @@ type Receipt = {
   invalid_sales_rows: number
   excluded_invalid_rows: number
   sales_method: string
+  sales_formula: string
+  profit_method: string | null
+  profit_formula: string | null
+  profit_coverage_pct: number
+  quantity_coverage_pct: number
   assumptions: string[]
 }
 
-type Report = {
+type VerificationFormula = {
+  key: string
+  label: string
+  formula: string
+  explanation: string
+  current_value: number | null
+  prior_value: number | null
+}
+
+type Verification = {
   currency: string
+  filename: string
+  mappings: Record<MappingKey, string | null>
   week_start: string
   week_end: string
-  sales_total: number
-  sales_rows: number
   prior_week_start: string
   prior_week_end: string
-  prior_sales_total: number | null
-  prior_sales_rows: number
-  absolute_change: number | null
-  percentage_change: number | null
+  row_reconciliation: {
+    original_rows: number
+    analyzed_rows: number
+    duplicate_candidates: number
+    excluded_duplicate_rows: number
+    excluded_invalid_rows: number
+    current_period_rows: number
+    prior_period_rows: number
+  }
+  assumptions: string[]
+  formulas: VerificationFormula[]
+  spreadsheet_steps: string[]
 }
 
 type Analysis = {
   receipt: Receipt
   report: Report
+  verification: Verification
 }
 
-type Step = 1 | 2 | 3 | 4
+type View = 'prepare' | 'report' | 'verify'
 
-const steps = ['Upload', 'Map columns', 'Review data', 'Weekly report']
+const emptyMappings: Mappings = {
+  date: '',
+  sales: '',
+  quantity: '',
+  unit_price: '',
+  product: '',
+  category: '',
+  store: '',
+  channel: '',
+  region: '',
+  discount: '',
+  cost: '',
+  profit: '',
+}
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US').format(value)
+const coreFields: Array<{
+  key: MappingKey
+  label: string
+  hint?: string
+  required?: boolean
+}> = [
+  { key: 'date', label: 'Transaction date', required: true },
+  {
+    key: 'sales',
+    label: 'Sales amount',
+    hint: 'Optional only when quantity and unit price are both mapped.',
+  },
+  { key: 'quantity', label: 'Quantity' },
+  { key: 'unit_price', label: 'Unit price' },
+]
+
+const analysisFields: Array<{
+  key: MappingKey
+  label: string
+  hint: string
+}> = [
+  { key: 'product', label: 'Product', hint: 'Product rankings and change drivers' },
+  { key: 'category', label: 'Category', hint: 'Category performance' },
+  { key: 'store', label: 'Store or location', hint: 'Location performance' },
+  { key: 'channel', label: 'Sales channel', hint: 'Channel mix' },
+  { key: 'region', label: 'Region', hint: 'Regional performance' },
+  { key: 'discount', label: 'Discount', hint: 'Discount levels and risks' },
+  { key: 'cost', label: 'Unit cost', hint: 'Profit when quantity is available' },
+  { key: 'profit', label: 'Profit', hint: 'Direct profit and margin reporting' },
+]
+
+function formatNumber(value: number, maximumFractionDigits = 0) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits }).format(value)
 }
 
 function formatCurrency(value: number, currency: string) {
@@ -75,6 +220,7 @@ function formatDateRange(start: string, end: string) {
   const dateFormatter = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     timeZone: 'UTC',
   })
   return `${dateFormatter.format(new Date(`${start}T00:00:00Z`))}–${dateFormatter.format(
@@ -88,15 +234,12 @@ function getErrorMessage(error: unknown) {
 }
 
 function App() {
-  const [step, setStep] = useState<Step>(1)
+  const [view, setView] = useState<View>('prepare')
   const [file, setFile] = useState<File | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [sheetName, setSheetName] = useState('')
-  const [dateColumn, setDateColumn] = useState('')
-  const [salesColumn, setSalesColumn] = useState('')
-  const [quantityColumn, setQuantityColumn] = useState('')
-  const [unitPriceColumn, setUnitPriceColumn] = useState('')
+  const [mappings, setMappings] = useState<Mappings>(emptyMappings)
   const [currency, setCurrency] = useState('USD')
   const [excludeDuplicates, setExcludeDuplicates] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -104,12 +247,14 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null)
 
   const canAnalyze = Boolean(
-    dateColumn && (salesColumn || (quantityColumn && unitPriceColumn)),
+    mappings.date &&
+      (mappings.sales || (mappings.quantity && mappings.unit_price)),
   )
 
-  const progressLabel = useMemo(
-    () => `Step ${step} of 4: ${steps[step - 1]}`,
-    [step],
+  const mappedAnalysisCount = useMemo(
+    () =>
+      analysisFields.filter(({ key }) => Boolean(mappings[key])).length,
+    [mappings],
   )
 
   async function readError(response: Response) {
@@ -118,82 +263,99 @@ function App() {
   }
 
   async function profileFile(selectedFile: File, selectedSheet = '') {
+    const form = new FormData()
+    form.append('file', selectedFile)
+    if (selectedSheet) form.append('sheet_name', selectedSheet)
+
+    const response = await fetch(`${API_URL}/api/profile`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!response.ok) throw new Error(await readError(response))
+
+    const nextProfile: Profile = await response.json()
+    setProfile(nextProfile)
+    setSheetName(nextProfile.selected_sheet ?? '')
+    setMappings(
+      Object.fromEntries(
+        Object.entries(nextProfile.suggestions).map(([key, value]) => [
+          key,
+          value ?? '',
+        ]),
+      ) as Mappings,
+    )
+    setExcludeDuplicates(false)
+  }
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFile = event.target.files?.[0]
+    if (!selectedFile) return
+
     setIsLoading(true)
     setError('')
     setAnalysis(null)
-
+    setView('prepare')
+    setFile(selectedFile)
     try {
-      const form = new FormData()
-      form.append('file', selectedFile)
-      if (selectedSheet) form.append('sheet_name', selectedSheet)
-
-      const response = await fetch(`${API_URL}/api/profile`, {
-        method: 'POST',
-        body: form,
-      })
-      if (!response.ok) throw new Error(await readError(response))
-
-      const nextProfile = (await response.json()) as Profile
-      setProfile(nextProfile)
-      setSheetName(nextProfile.selected_sheet ?? '')
-      setDateColumn(nextProfile.suggestions.date ?? '')
-      setSalesColumn(nextProfile.suggestions.sales ?? '')
-      setQuantityColumn(nextProfile.suggestions.quantity ?? '')
-      setUnitPriceColumn(nextProfile.suggestions.unit_price ?? '')
-      setExcludeDuplicates(false)
-      setStep(2)
+      await profileFile(selectedFile)
     } catch (caughtError) {
+      setFile(null)
       setProfile(null)
       setError(getErrorMessage(caughtError))
-      setStep(1)
+    } finally {
+      setIsLoading(false)
+      event.target.value = ''
+    }
+  }
+
+  async function handleSheetChange(event: ChangeEvent<HTMLSelectElement>) {
+    if (!file) return
+    const selectedSheet = event.target.value
+    setSheetName(selectedSheet)
+    setIsLoading(true)
+    setError('')
+    try {
+      await profileFile(file, selectedSheet)
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError))
     } finally {
       setIsLoading(false)
     }
   }
 
-  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const selectedFile = event.target.files?.[0]
-    if (!selectedFile) return
-    setFile(selectedFile)
-    await profileFile(selectedFile)
+  function buildAnalysisForm() {
+    if (!file) throw new Error('Choose a file before generating a report.')
+    const form = new FormData()
+    form.append('file', file)
+    if (sheetName) form.append('sheet_name', sheetName)
+    form.append('currency', currency)
+    form.append('exclude_exact_duplicates', String(excludeDuplicates))
+    Object.entries(mappings).forEach(([key, value]) => {
+      if (value) form.append(`${key}_column`, value)
+    })
+    return form
   }
 
-  async function handleSheetChange(event: ChangeEvent<HTMLSelectElement>) {
-    const selectedSheet = event.target.value
-    setSheetName(selectedSheet)
-    if (file) await profileFile(file, selectedSheet)
-  }
-
-  async function analyzeFile(event: FormEvent) {
+  async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!file || !canAnalyze) return
+    if (!canAnalyze) {
+      setError(
+        'Map a transaction date and either a sales amount or both quantity and unit price.',
+      )
+      return
+    }
 
     setIsLoading(true)
     setError('')
-
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('date_column', dateColumn)
-      if (salesColumn) form.append('sales_column', salesColumn)
-      if (!salesColumn && quantityColumn) {
-        form.append('quantity_column', quantityColumn)
-      }
-      if (!salesColumn && unitPriceColumn) {
-        form.append('unit_price_column', unitPriceColumn)
-      }
-      if (sheetName) form.append('sheet_name', sheetName)
-      form.append('currency', currency)
-      form.append('exclude_exact_duplicates', String(excludeDuplicates))
-
       const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
-        body: form,
+        body: buildAnalysisForm(),
       })
       if (!response.ok) throw new Error(await readError(response))
-
-      setAnalysis((await response.json()) as Analysis)
-      setStep(3)
+      const nextAnalysis: Analysis = await response.json()
+      setAnalysis(nextAnalysis)
+      setView('report')
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (caughtError) {
       setError(getErrorMessage(caughtError))
@@ -202,134 +364,126 @@ function App() {
     }
   }
 
+  function updateMapping(key: MappingKey, value: string) {
+    setMappings((current) => ({ ...current, [key]: value }))
+  }
+
   function reset() {
-    setStep(1)
+    setView('prepare')
     setFile(null)
     setProfile(null)
     setAnalysis(null)
+    setSheetName('')
+    setMappings(emptyMappings)
+    setCurrency('USD')
+    setExcludeDuplicates(false)
     setError('')
-    if (fileInput.current) fileInput.current.value = ''
+    fileInput.current?.focus()
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" id="top">
       <header className="site-header">
-        <a className="brand" href="#top" onClick={reset}>
+        <button className="brand-button" type="button" onClick={reset}>
           SalesScope
-        </a>
+        </button>
         <span className="header-note">Transparent weekly sales reporting</span>
       </header>
 
-      <main id="top" className="main-content">
-        <nav aria-label="Analysis progress" className="stepper">
-          <p className="sr-only" aria-live="polite">
-            {progressLabel}
-          </p>
-          <ol>
-            {steps.map((label, index) => {
-              const number = index + 1
-              const state =
-                number === step ? 'current' : number < step ? 'complete' : 'upcoming'
-              return (
-                <li
-                  key={label}
-                  className={`step step--${state}`}
-                  aria-current={state === 'current' ? 'step' : undefined}
-                >
-                  <span className="step__number">{number}</span>
-                  <span>{label}</span>
-                </li>
-              )
-            })}
-          </ol>
-        </nav>
-
-        {error && (
-          <div className="notice notice--error" role="alert">
-            <strong>We could not continue.</strong>
-            <span>{error}</span>
-          </div>
-        )}
-
-        {step === 1 && (
-          <section className="narrow-panel" aria-labelledby="upload-title">
-            <div className="eyebrow">Weekly reporting, without spreadsheet cleanup</div>
-            <h1 id="upload-title">Turn a sales spreadsheet into a clear weekly report.</h1>
+      {view === 'prepare' && (
+        <main className="main-content prepare-page">
+          <section className="prepare-intro" aria-labelledby="prepare-title">
+            <div className="eyebrow">Prepare weekly report</div>
+            <h1 id="prepare-title">Turn a sales file into answers your manager can use.</h1>
             <p className="intro">
-              SalesScope checks your file, explains what can be analyzed, and shows
-              every cleanup decision before calculating results.
-            </p>
-
-            <div className="requirements">
-              <h2>What your file needs</h2>
-              <p>
-                At minimum, include a <strong>transaction date</strong> and a{' '}
-                <strong>sales amount</strong>. You can also provide quantity and unit
-                price so SalesScope can calculate the sales amount.
-              </p>
-              <details>
-                <summary>Fields that unlock a fuller analysis</summary>
-                <ul>
-                  <li>Quantity for units sold</li>
-                  <li>Product and category for performance breakdowns</li>
-                  <li>Store, location, territory, or region</li>
-                  <li>Sales channel</li>
-                  <li>Discount percentage or amount</li>
-                  <li>Cost or profit for margin analysis</li>
-                </ul>
-              </details>
-            </div>
-
-            <div className="upload-zone">
-              <label htmlFor="sales-file">Upload sales file</label>
-              <p>Choose one CSV or Excel file, up to 100 MB.</p>
-              <input
-                ref={fileInput}
-                id="sales-file"
-                type="file"
-                accept=".csv,.xlsx"
-                onChange={handleFile}
-                disabled={isLoading}
-              />
-              <button
-                className="button button--primary"
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                disabled={isLoading}
-              >
-                {isLoading ? 'Reading file…' : 'Choose file'}
-              </button>
-            </div>
-
-            <p className="privacy-note">
-              Your original file stays unchanged. During this MVP, uploads are
-              processed temporarily and are not saved as report history.
+              Upload one CSV or Excel sheet. SalesScope will recognize common
+              columns, show what the file can support, and explain every cleanup
+              choice before creating the report.
             </p>
           </section>
-        )}
 
-        {step === 2 && profile && (
-          <section aria-labelledby="mapping-title">
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">File recognized</div>
-                <h1 id="mapping-title">Confirm what each column means.</h1>
-                <p>
-                  {profile.filename} · {formatNumber(profile.row_count)} rows ·{' '}
-                  {profile.column_count} columns
-                </p>
-              </div>
-              <button className="button button--quiet" type="button" onClick={reset}>
-                Replace file
-              </button>
+          {error && (
+            <div className="notice notice--error" role="alert">
+              <strong>We could not continue.</strong>
+              <span>{error}</span>
             </div>
+          )}
 
-            <form onSubmit={analyzeFile}>
+          {!profile ? (
+            <section className="upload-card" aria-labelledby="upload-title">
+              <div className="requirements">
+                <h2 id="upload-title">What your file needs</h2>
+                <p>
+                  At minimum, include a <strong>transaction date</strong> and a{' '}
+                  <strong>sales amount</strong>. Quantity and unit price can be used
+                  to calculate sales when no total is provided.
+                </p>
+                <details>
+                  <summary>Fields that unlock a fuller report</summary>
+                  <p>
+                    Quantity, product, category, store or location, channel,
+                    discount, and cost or profit.
+                  </p>
+                </details>
+              </div>
+
+              <div className="upload-zone">
+                <label htmlFor="sales-file">Upload sales file</label>
+                <p>Choose one CSV or Excel (.xlsx) file, up to 100 MB.</p>
+                <button
+                  className="button button--primary"
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Reading file…' : 'Choose file'}
+                </button>
+                <input
+                  ref={fileInput}
+                  id="sales-file"
+                  type="file"
+                  accept=".csv,.xlsx"
+                  onChange={handleFileChange}
+                />
+              </div>
+
+              <p className="privacy-note">
+                Your original file stays unchanged. This MVP processes uploads
+                temporarily and does not save report history.
+              </p>
+            </section>
+          ) : (
+            <form onSubmit={handleAnalyze}>
+              <section className="file-summary" aria-label="Uploaded file">
+                <div>
+                  <span className="status-dot" aria-hidden="true" />
+                  <div>
+                    <strong>{profile.filename}</strong>
+                    <span>
+                      {formatNumber(profile.row_count)} rows ·{' '}
+                      {formatNumber(profile.column_count)} columns
+                    </span>
+                  </div>
+                </div>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  Replace file
+                </button>
+                <input
+                  ref={fileInput}
+                  className="sr-only"
+                  type="file"
+                  accept=".csv,.xlsx"
+                  onChange={handleFileChange}
+                />
+              </section>
+
               {profile.sheet_names.length > 1 && (
                 <div className="form-field sheet-field">
-                  <label htmlFor="sheet-name">
-                    Select the sheet with your sales rows
-                  </label>
+                  <label htmlFor="sheet-name">Sales sheet</label>
                   <select
                     id="sheet-name"
                     value={sheetName}
@@ -345,292 +499,222 @@ function App() {
                 </div>
               )}
 
-              <div className="mapping-card">
-                <div className="mapping-header" aria-hidden="true">
-                  <span>Sales concept</span>
-                  <span>Uploaded column</span>
-                  <span>Status</span>
-                </div>
-                <MappingRow
-                  id="date-column"
-                  label="Transaction date"
-                  required
-                  value={dateColumn}
-                  columns={profile.columns}
-                  onChange={setDateColumn}
-                />
-                <MappingRow
-                  id="sales-column"
-                  label="Sales amount"
-                  value={salesColumn}
-                  columns={profile.columns}
-                  onChange={setSalesColumn}
-                  hint="Optional when quantity and unit price are both mapped."
-                />
-                <MappingRow
-                  id="quantity-column"
-                  label="Quantity"
-                  value={quantityColumn}
-                  columns={profile.columns}
-                  onChange={setQuantityColumn}
-                />
-                <MappingRow
-                  id="unit-price-column"
-                  label="Unit price"
-                  value={unitPriceColumn}
-                  columns={profile.columns}
-                  onChange={setUnitPriceColumn}
-                />
-              </div>
-
-              <div className="form-grid">
-                <div className="form-field">
-                  <label htmlFor="currency">Currency for this analysis</label>
-                  <select
-                    id="currency"
-                    value={currency}
-                    onChange={(event) => setCurrency(event.target.value)}
-                  >
-                    <option value="USD">USD — US dollar</option>
-                    <option value="CAD">CAD — Canadian dollar</option>
-                    <option value="EUR">EUR — Euro</option>
-                    <option value="GBP">GBP — British pound</option>
-                  </select>
+              <section className="workspace-section" aria-labelledby="core-mapping-title">
+                <div className="section-heading">
+                  <div>
+                    <span className="section-number">1</span>
+                    <div>
+                      <h2 id="core-mapping-title">Confirm the core fields</h2>
+                      <p>These fields determine whether a weekly report can be created.</p>
+                    </div>
+                  </div>
+                  <span className={`status-badge ${canAnalyze ? 'is-ready' : 'needs-attention'}`}>
+                    {canAnalyze ? 'Ready' : 'Needs attention'}
+                  </span>
                 </div>
 
-                <fieldset className="duplicate-choice">
-                  <legend>Possible duplicate rows</legend>
-                  <p>
-                    We found {formatNumber(profile.exact_duplicate_candidates)} exact
-                    row {profile.exact_duplicate_candidates === 1 ? 'match' : 'matches'}.
-                    Without a reliable transaction-line ID, these may be real sales.
-                  </p>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={excludeDuplicates}
-                      onChange={(event) => setExcludeDuplicates(event.target.checked)}
-                      disabled={profile.exact_duplicate_candidates === 0}
+                <div className="mapping-card">
+                  {coreFields.map((field) => (
+                    <MappingRow
+                      key={field.key}
+                      field={field}
+                      value={mappings[field.key]}
+                      columns={profile.columns}
+                      onChange={(value) => updateMapping(field.key, value)}
                     />
-                    Exclude these rows from this analysis
-                  </label>
-                </fieldset>
-              </div>
+                  ))}
+                </div>
+              </section>
 
-              {!canAnalyze && (
-                <p className="field-guidance" role="status">
-                  Map a transaction date and either a sales amount or both quantity
-                  and unit price.
-                </p>
-              )}
+              <section className="workspace-section" aria-labelledby="fuller-report-title">
+                <div className="section-heading">
+                  <div>
+                    <span className="section-number">2</span>
+                    <div>
+                      <h2 id="fuller-report-title">Choose the deeper analysis</h2>
+                      <p>
+                        SalesScope recognized {mappedAnalysisCount} of 8 optional
+                        analysis fields.
+                      </p>
+                    </div>
+                  </div>
+                </div>
 
-              <div className="actions">
-                <button className="button button--secondary" type="button" onClick={reset}>
-                  Back
-                </button>
+                <details className="mapping-details">
+                  <summary>Review optional report fields</summary>
+                  <div className="mapping-card">
+                    {analysisFields.map((field) => (
+                      <MappingRow
+                        key={field.key}
+                        field={field}
+                        value={mappings[field.key]}
+                        columns={profile.columns}
+                        onChange={(value) => updateMapping(field.key, value)}
+                      />
+                    ))}
+                  </div>
+                </details>
+              </section>
+
+              <section className="workspace-section" aria-labelledby="review-choices-title">
+                <div className="section-heading">
+                  <div>
+                    <span className="section-number">3</span>
+                    <div>
+                      <h2 id="review-choices-title">Review report choices</h2>
+                      <p>Confirm how SalesScope should interpret this file.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="choice-grid">
+                  <div className="form-field">
+                    <label htmlFor="currency">Currency</label>
+                    <select
+                      id="currency"
+                      value={currency}
+                      onChange={(event) => setCurrency(event.target.value)}
+                    >
+                      <option value="USD">USD — US dollar</option>
+                      <option value="CAD">CAD — Canadian dollar</option>
+                      <option value="EUR">EUR — Euro</option>
+                      <option value="GBP">GBP — British pound</option>
+                    </select>
+                  </div>
+
+                  <fieldset className="duplicate-choice">
+                    <legend>Possible duplicate rows</legend>
+                    <p>
+                      We found {formatNumber(profile.exact_duplicate_candidates)} exact
+                      row matches. Without a reliable transaction-line ID, they may be
+                      separate real sales.
+                    </p>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={excludeDuplicates}
+                        onChange={(event) =>
+                          setExcludeDuplicates(event.target.checked)
+                        }
+                        disabled={profile.exact_duplicate_candidates === 0}
+                      />
+                      Exclude these rows from this report
+                    </label>
+                  </fieldset>
+                </div>
+              </section>
+
+              <section
+                className={`readiness-card ${canAnalyze ? 'is-ready' : ''}`}
+                aria-live="polite"
+              >
+                <div>
+                  <span className="readiness-icon" aria-hidden="true">
+                    {canAnalyze ? '✓' : '!'}
+                  </span>
+                  <div>
+                    <h2>
+                      {canAnalyze
+                        ? 'Ready to generate the weekly report'
+                        : 'The report still needs required fields'}
+                    </h2>
+                    <p>
+                      {canAnalyze
+                        ? 'SalesScope will validate every row, calculate the latest complete week, and show only the analyses this file supports.'
+                        : 'Map a date and either sales amount or both quantity and unit price.'}
+                    </p>
+                  </div>
+                </div>
                 <button
-                  className="button button--primary"
+                  className="button button--primary button--large"
                   type="submit"
                   disabled={!canAnalyze || isLoading}
                 >
-                  {isLoading ? 'Checking data…' : 'Review data'}
+                  {isLoading ? 'Analyzing file…' : 'Generate weekly report'}
                 </button>
-              </div>
+              </section>
             </form>
-          </section>
-        )}
+          )}
+        </main>
+      )}
 
-        {step === 3 && analysis && (
-          <section aria-labelledby="review-title">
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">Quality receipt</div>
-                <h1 id="review-title">Review what will be analyzed.</h1>
-                <p>{analysis.receipt.filename}</p>
-              </div>
+      {view === 'report' && analysis && (
+        <main className="main-content report-page">
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">Weekly sales report</div>
+              <h1>
+                {formatDateRange(
+                  analysis.report.week_start,
+                  analysis.report.week_end,
+                )}
+              </h1>
+              <p>
+                Latest complete Monday-through-Sunday period in{' '}
+                {analysis.receipt.filename}.
+              </p>
             </div>
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={() => setView('prepare')}
+            >
+              Review data setup
+            </button>
+          </div>
 
-            <div className="receipt-grid">
-              <ReceiptItem
-                label="Original rows"
-                value={formatNumber(analysis.receipt.original_rows)}
-              />
-              <ReceiptItem
-                label="Rows analyzed"
-                value={formatNumber(analysis.receipt.analyzed_rows)}
-              />
-              <ReceiptItem
-                label="Duplicate rows excluded"
-                value={formatNumber(analysis.receipt.excluded_duplicate_rows)}
-              />
-              <ReceiptItem
-                label="Invalid rows excluded"
-                value={formatNumber(analysis.receipt.excluded_invalid_rows)}
-              />
-            </div>
-
-            <div className="review-columns">
-              <div className="review-panel">
-                <h2>Checks and calculations</h2>
-                <dl className="check-list">
-                  <div>
-                    <dt>Possible duplicate rows</dt>
-                    <dd>{formatNumber(analysis.receipt.duplicate_candidates)}</dd>
-                  </div>
-                  <div>
-                    <dt>Invalid transaction dates</dt>
-                    <dd>{formatNumber(analysis.receipt.invalid_date_rows)}</dd>
-                  </div>
-                  <div>
-                    <dt>Invalid sales values</dt>
-                    <dd>{formatNumber(analysis.receipt.invalid_sales_rows)}</dd>
-                  </div>
-                </dl>
-                <p>{analysis.receipt.sales_method}</p>
-              </div>
-
-              <div className="review-panel">
-                <h2>Assumptions</h2>
-                <ul>
-                  {analysis.receipt.assumptions.map((assumption) => (
-                    <li key={assumption}>{assumption}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="notice notice--info">
-              <strong>First implementation slice</strong>
-              <span>
-                Weekly sales is available. Product, store, channel, discount, and
-                profit analysis will be added only after this core result is verified.
-              </span>
-            </div>
-
-            <div className="actions">
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={() => setStep(2)}
-              >
-                Back to mapping
-              </button>
-              <button
-                className="button button--primary"
-                type="button"
-                onClick={() => {
-                  setStep(4)
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                }}
-              >
-                Continue to report
-              </button>
-            </div>
-          </section>
-        )}
-
-        {step === 4 && analysis && (
-          <section aria-labelledby="report-title">
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">Weekly sales report</div>
-                <h1 id="report-title">
-                  Week of{' '}
-                  {formatDateRange(
-                    analysis.report.week_start,
-                    analysis.report.week_end,
-                  )}
-                </h1>
-                <p>
-                  Latest complete Monday-through-Sunday period in the uploaded file.
-                </p>
-              </div>
-              <button
-                className="button button--quiet"
-                type="button"
-                onClick={() => setStep(3)}
-              >
-                View upload receipt
-              </button>
-            </div>
-
-            <article className="metric-card">
-              <span className="metric-card__label">Total sales</span>
-              <strong>
-                {formatCurrency(analysis.report.sales_total, analysis.report.currency)}
-              </strong>
-              <span>
-                {formatNumber(analysis.report.sales_rows)} valid sales rows
-              </span>
-              {analysis.report.prior_sales_total === null ? (
-                <p>No complete prior week is available for comparison.</p>
-              ) : (
-                <p>
-                  {analysis.report.absolute_change! >= 0 ? 'Increased' : 'Decreased'}{' '}
-                  {formatCurrency(
-                    Math.abs(analysis.report.absolute_change!),
-                    analysis.report.currency,
-                  )}{' '}
-                  {analysis.report.percentage_change === null
-                    ? ''
-                    : `(${Math.abs(analysis.report.percentage_change).toFixed(1)}%)`}{' '}
-                  from{' '}
-                  {formatDateRange(
-                    analysis.report.prior_week_start,
-                    analysis.report.prior_week_end,
-                  )}
-                  .
-                </p>
+          <div className="metric-card">
+            <span className="metric-card__label">Total sales</span>
+            <strong>
+              {formatCurrency(
+                analysis.report.metrics.sales.current ?? 0,
+                analysis.report.currency,
               )}
-            </article>
+            </strong>
+            <p>
+              {formatNumber(analysis.report.metrics.sales_rows.current ?? 0)} sales
+              rows were included.
+            </p>
+          </div>
 
-            <div className="notice notice--success">
-              <strong>The first result is working.</strong>
-              <span>
-                This total was calculated from the mapped fields and approved cleanup
-                choices in a temporary DuckDB analysis table.
-              </span>
-            </div>
-
-            <div className="actions">
-              <button className="button button--secondary" type="button" onClick={reset}>
-                Analyze another file
-              </button>
-            </div>
-          </section>
-        )}
-      </main>
+          <div className="notice notice--info">
+            <strong>Detailed report is next.</strong>
+            <span>
+              The preparation workflow now leads directly to a valid result. The
+              report dashboard will be added in the next focused commit.
+            </span>
+          </div>
+        </main>
+      )}
     </div>
   )
 }
 
-type MappingRowProps = {
-  id: string
-  label: string
-  value: string
-  columns: string[]
-  onChange: (value: string) => void
-  required?: boolean
-  hint?: string
-}
-
 function MappingRow({
-  id,
-  label,
+  field,
   value,
   columns,
   onChange,
-  required = false,
-  hint,
-}: MappingRowProps) {
+}: {
+  field: {
+    key: MappingKey
+    label: string
+    hint?: string
+    required?: boolean
+  }
+  value: string
+  columns: string[]
+  onChange: (value: string) => void
+}) {
+  const id = `mapping-${field.key}`
   return (
     <div className="mapping-row">
       <div>
         <label htmlFor={id}>
-          {label}
-          {required && <span className="required">Required</span>}
+          {field.label}
+          {field.required && <span className="required">Required</span>}
         </label>
-        {hint && <small>{hint}</small>}
+        {field.hint && <small>{field.hint}</small>}
       </div>
       <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
         <option value="">Not provided</option>
@@ -641,17 +725,8 @@ function MappingRow({
         ))}
       </select>
       <span className={`mapping-status ${value ? 'is-confirmed' : ''}`}>
-        {value ? 'Mapped' : required ? 'Needs attention' : 'Optional'}
+        {value ? 'Mapped' : field.required ? 'Needs attention' : 'Not available'}
       </span>
-    </div>
-  )
-}
-
-function ReceiptItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="receipt-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   )
 }

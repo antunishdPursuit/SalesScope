@@ -4,32 +4,68 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
-import duckdb
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+
+from app.analysis import (
+    ColumnMap,
+    build_report,
+    build_verification,
+    prepare_analysis,
+    verification_export,
+)
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 SUPPORTED_SUFFIXES = {".csv", ".xlsx"}
 
 COLUMN_ALIASES = {
-    "date": {
+    "date": (
         "date",
         "orderdate",
         "saledate",
         "transactiondate",
         "purchasedate",
-    },
-    "sales": {
+    ),
+    "sales": (
         "totalvalue",
         "revenue",
         "sales",
         "salesamount",
         "linetotal",
         "total",
-    },
-    "quantity": {"quantity", "qty", "units", "unitssold"},
-    "unit_price": {"unitprice", "price", "saleprice"},
+    ),
+    "quantity": ("quantity", "qty", "units", "unitssold"),
+    "unit_price": ("unitprice", "price", "saleprice"),
+    "product": (
+        "productname",
+        "skuname",
+        "product",
+        "sku",
+        "productid",
+        "skuid",
+    ),
+    "category": ("category", "productcategory"),
+    "store": (
+        "storename",
+        "locationname",
+        "store",
+        "location",
+        "storeid",
+        "locationid",
+    ),
+    "channel": ("channel", "saleschannel", "orderchannel"),
+    "region": ("region", "territory", "salesregion"),
+    "discount": (
+        "discountpct",
+        "discountpercentage",
+        "discountrate",
+        "discount",
+        "discountamount",
+    ),
+    "cost": ("costprice", "unitcost", "cost", "productcost"),
+    "profit": ("profit", "grossprofit", "lineprofit"),
 }
 
 
@@ -39,17 +75,18 @@ def normalize_header(value: str) -> str:
 
 def suggest_columns(columns: list[str]) -> dict[str, str | None]:
     normalized = {column: normalize_header(column) for column in columns}
-    return {
-        concept: next(
+    suggestions: dict[str, str | None] = {}
+    for concept, aliases in COLUMN_ALIASES.items():
+        suggestions[concept] = next(
             (
                 column
+                for alias in aliases
                 for column, normalized_column in normalized.items()
-                if normalized_column in aliases
+                if normalized_column == alias
             ),
             None,
         )
-        for concept, aliases in COLUMN_ALIASES.items()
-    }
+    return suggestions
 
 
 async def read_upload(upload: UploadFile) -> tuple[bytes, str]:
@@ -124,15 +161,71 @@ def load_frame(data: bytes, suffix: str, sheet_name: str | None) -> pd.DataFrame
     return frame
 
 
-def require_column(frame: pd.DataFrame, column: str, label: str) -> None:
-    if column not in frame.columns:
+def require_column(frame: pd.DataFrame, column: str | None, label: str) -> None:
+    if column and column not in frame.columns:
         raise HTTPException(
             status_code=400,
             detail=f"The selected {label} column was not found in the uploaded table.",
         )
 
 
-app = FastAPI(title="SalesScope API", version="0.1.0")
+def mappings_from_form(
+    frame: pd.DataFrame,
+    *,
+    date_column: str,
+    sales_column: str | None,
+    quantity_column: str | None,
+    unit_price_column: str | None,
+    product_column: str | None,
+    category_column: str | None,
+    store_column: str | None,
+    channel_column: str | None,
+    region_column: str | None,
+    discount_column: str | None,
+    cost_column: str | None,
+    profit_column: str | None,
+) -> ColumnMap:
+    selected = {
+        "date": date_column,
+        "sales": sales_column,
+        "quantity": quantity_column,
+        "unit price": unit_price_column,
+        "product": product_column,
+        "category": category_column,
+        "store or location": store_column,
+        "channel": channel_column,
+        "region": region_column,
+        "discount": discount_column,
+        "cost": cost_column,
+        "profit": profit_column,
+    }
+    for label, column in selected.items():
+        require_column(frame, column, label)
+
+    if not sales_column and not (quantity_column and unit_price_column):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Choose a sales amount column, or choose both quantity and unit price."
+            ),
+        )
+    return ColumnMap(
+        date=date_column,
+        sales=sales_column,
+        quantity=quantity_column,
+        unit_price=unit_price_column,
+        product=product_column,
+        category=category_column,
+        store=store_column,
+        channel=channel_column,
+        region=region_column,
+        discount=discount_column,
+        cost=cost_column,
+        profit=profit_column,
+    )
+
+
+app = FastAPI(title="SalesScope API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -170,6 +263,55 @@ async def profile_upload(
     }
 
 
+def analyze_frame(
+    frame: pd.DataFrame,
+    *,
+    filename: str | None,
+    currency: str,
+    exclude_exact_duplicates: bool,
+    date_column: str,
+    sales_column: str | None,
+    quantity_column: str | None,
+    unit_price_column: str | None,
+    product_column: str | None,
+    category_column: str | None,
+    store_column: str | None,
+    channel_column: str | None,
+    region_column: str | None,
+    discount_column: str | None,
+    cost_column: str | None,
+    profit_column: str | None,
+) -> tuple[object, dict[str, object], dict[str, object]]:
+    mappings = mappings_from_form(
+        frame,
+        date_column=date_column,
+        sales_column=sales_column,
+        quantity_column=quantity_column,
+        unit_price_column=unit_price_column,
+        product_column=product_column,
+        category_column=category_column,
+        store_column=store_column,
+        channel_column=channel_column,
+        region_column=region_column,
+        discount_column=discount_column,
+        cost_column=cost_column,
+        profit_column=profit_column,
+    )
+    try:
+        bundle = prepare_analysis(
+            frame,
+            mappings,
+            currency=currency,
+            exclude_exact_duplicates=exclude_exact_duplicates,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    bundle.receipt["filename"] = filename
+    report = build_report(bundle, currency=currency)
+    verification = build_verification(bundle, report, currency=currency)
+    return bundle, report, verification
+
+
 @app.post("/api/analyze")
 async def analyze_upload(
     file: Annotated[UploadFile, File()],
@@ -177,162 +319,91 @@ async def analyze_upload(
     sales_column: Annotated[str | None, Form()] = None,
     quantity_column: Annotated[str | None, Form()] = None,
     unit_price_column: Annotated[str | None, Form()] = None,
+    product_column: Annotated[str | None, Form()] = None,
+    category_column: Annotated[str | None, Form()] = None,
+    store_column: Annotated[str | None, Form()] = None,
+    channel_column: Annotated[str | None, Form()] = None,
+    region_column: Annotated[str | None, Form()] = None,
+    discount_column: Annotated[str | None, Form()] = None,
+    cost_column: Annotated[str | None, Form()] = None,
+    profit_column: Annotated[str | None, Form()] = None,
     sheet_name: Annotated[str | None, Form()] = None,
     currency: Annotated[str, Form()] = "USD",
     exclude_exact_duplicates: Annotated[bool, Form()] = False,
 ) -> dict[str, object]:
     data, suffix = await read_upload(file)
     frame = load_frame(data, suffix, sheet_name)
-    require_column(frame, date_column, "transaction date")
-
-    if sales_column:
-        require_column(frame, sales_column, "sales amount")
-    elif quantity_column and unit_price_column:
-        require_column(frame, quantity_column, "quantity")
-        require_column(frame, unit_price_column, "unit price")
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Choose a sales amount column, or choose both quantity and unit price."
-            ),
-        )
-
-    original_rows = int(len(frame))
-    duplicate_candidates = int(frame.duplicated().sum())
-    working = frame.drop_duplicates().copy() if exclude_exact_duplicates else frame.copy()
-    excluded_duplicates = original_rows - int(len(working))
-
-    parsed_dates = pd.to_datetime(working[date_column], errors="coerce")
-    if sales_column:
-        sales_amount = pd.to_numeric(working[sales_column], errors="coerce")
-        sales_method = f"Used values from {sales_column}."
-    else:
-        quantity = pd.to_numeric(working[quantity_column], errors="coerce")
-        unit_price = pd.to_numeric(working[unit_price_column], errors="coerce")
-        sales_amount = quantity * unit_price
-        sales_method = (
-            f"Calculated sales as {quantity_column} multiplied by "
-            f"{unit_price_column}."
-        )
-
-    invalid_dates = int(parsed_dates.isna().sum())
-    invalid_sales = int(sales_amount.isna().sum())
-    valid = parsed_dates.notna() & sales_amount.notna()
-    excluded_invalid = int((~valid).sum())
-
-    analysis = pd.DataFrame(
-        {
-            "transaction_date": parsed_dates[valid].dt.normalize(),
-            "sales_amount": sales_amount[valid].astype(float),
-        }
+    bundle, report, verification = analyze_frame(
+        frame,
+        filename=file.filename,
+        currency=currency,
+        exclude_exact_duplicates=exclude_exact_duplicates,
+        date_column=date_column,
+        sales_column=sales_column,
+        quantity_column=quantity_column,
+        unit_price_column=unit_price_column,
+        product_column=product_column,
+        category_column=category_column,
+        store_column=store_column,
+        channel_column=channel_column,
+        region_column=region_column,
+        discount_column=discount_column,
+        cost_column=cost_column,
+        profit_column=profit_column,
     )
-    if analysis.empty:
-        raise HTTPException(
-            status_code=400,
-            detail="No rows contain both a valid transaction date and sales amount.",
-        )
-
-    latest_date = analysis["transaction_date"].max()
-    latest_week_start = latest_date - pd.Timedelta(days=int(latest_date.weekday()))
-    if int(latest_date.weekday()) < 6:
-        latest_week_start -= pd.Timedelta(days=7)
-    latest_week_end = latest_week_start + pd.Timedelta(days=6)
-    prior_week_start = latest_week_start - pd.Timedelta(days=7)
-    prior_week_end = latest_week_start - pd.Timedelta(days=1)
-
-    connection = duckdb.connect(database=":memory:")
-    try:
-        connection.register("analysis_frame", analysis)
-        connection.execute(
-            """
-            CREATE TABLE sales_analysis AS
-            SELECT
-                CAST(transaction_date AS DATE) AS transaction_date,
-                CAST(sales_amount AS DOUBLE) AS sales_amount
-            FROM analysis_frame
-            """
-        )
-        weekly = connection.execute(
-            """
-            SELECT
-                COALESCE(
-                    SUM(sales_amount) FILTER (
-                        WHERE transaction_date BETWEEN ? AND ?
-                    ),
-                    0
-                ) AS current_sales,
-                COUNT(*) FILTER (
-                    WHERE transaction_date BETWEEN ? AND ?
-                ) AS current_rows,
-                COALESCE(
-                    SUM(sales_amount) FILTER (
-                        WHERE transaction_date BETWEEN ? AND ?
-                    ),
-                    0
-                ) AS prior_sales,
-                COUNT(*) FILTER (
-                    WHERE transaction_date BETWEEN ? AND ?
-                ) AS prior_rows
-            FROM sales_analysis
-            """,
-            [
-                latest_week_start.date(),
-                latest_week_end.date(),
-                latest_week_start.date(),
-                latest_week_end.date(),
-                prior_week_start.date(),
-                prior_week_end.date(),
-                prior_week_start.date(),
-                prior_week_end.date(),
-            ],
-        ).fetchone()
-    finally:
-        connection.close()
-
-    current_sales = float(weekly[0])
-    current_rows = int(weekly[1])
-    prior_sales = float(weekly[2])
-    prior_rows = int(weekly[3])
-    absolute_change = current_sales - prior_sales if prior_rows else None
-    percentage_change = (
-        (absolute_change / prior_sales) * 100
-        if absolute_change is not None and prior_sales != 0
-        else None
-    )
-
     return {
-        "receipt": {
-            "filename": file.filename,
-            "original_rows": original_rows,
-            "analyzed_rows": int(len(analysis)),
-            "duplicate_candidates": duplicate_candidates,
-            "excluded_duplicate_rows": excluded_duplicates,
-            "invalid_date_rows": invalid_dates,
-            "invalid_sales_rows": invalid_sales,
-            "excluded_invalid_rows": excluded_invalid,
-            "sales_method": sales_method,
-            "assumptions": [
-                "Reporting weeks run Monday through Sunday.",
-                f"All sales values are treated as {currency}.",
-                (
-                    "Possible duplicate rows were excluded with your confirmation."
-                    if excluded_duplicates
-                    else "Possible duplicate rows were kept in this analysis."
-                ),
-            ],
-        },
-        "report": {
-            "currency": currency,
-            "week_start": latest_week_start.date().isoformat(),
-            "week_end": latest_week_end.date().isoformat(),
-            "sales_total": current_sales,
-            "sales_rows": current_rows,
-            "prior_week_start": prior_week_start.date().isoformat(),
-            "prior_week_end": prior_week_end.date().isoformat(),
-            "prior_sales_total": prior_sales if prior_rows else None,
-            "prior_sales_rows": prior_rows,
-            "absolute_change": absolute_change,
-            "percentage_change": percentage_change,
-        },
+        "receipt": bundle.receipt,
+        "report": report,
+        "verification": verification,
     }
+
+
+@app.post("/api/verification.csv")
+async def download_verification(
+    file: Annotated[UploadFile, File()],
+    date_column: Annotated[str, Form()],
+    sales_column: Annotated[str | None, Form()] = None,
+    quantity_column: Annotated[str | None, Form()] = None,
+    unit_price_column: Annotated[str | None, Form()] = None,
+    product_column: Annotated[str | None, Form()] = None,
+    category_column: Annotated[str | None, Form()] = None,
+    store_column: Annotated[str | None, Form()] = None,
+    channel_column: Annotated[str | None, Form()] = None,
+    region_column: Annotated[str | None, Form()] = None,
+    discount_column: Annotated[str | None, Form()] = None,
+    cost_column: Annotated[str | None, Form()] = None,
+    profit_column: Annotated[str | None, Form()] = None,
+    sheet_name: Annotated[str | None, Form()] = None,
+    currency: Annotated[str, Form()] = "USD",
+    exclude_exact_duplicates: Annotated[bool, Form()] = False,
+) -> Response:
+    data, suffix = await read_upload(file)
+    frame = load_frame(data, suffix, sheet_name)
+    bundle, report, _ = analyze_frame(
+        frame,
+        filename=file.filename,
+        currency=currency,
+        exclude_exact_duplicates=exclude_exact_duplicates,
+        date_column=date_column,
+        sales_column=sales_column,
+        quantity_column=quantity_column,
+        unit_price_column=unit_price_column,
+        product_column=product_column,
+        category_column=category_column,
+        store_column=store_column,
+        channel_column=channel_column,
+        region_column=region_column,
+        discount_column=discount_column,
+        cost_column=cost_column,
+        profit_column=profit_column,
+    )
+    export = verification_export(bundle, report)
+    return Response(
+        content=export.to_csv(index=False),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="salescope-verification.csv"'
+            )
+        },
+    )

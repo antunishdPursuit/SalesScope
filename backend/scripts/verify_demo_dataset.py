@@ -32,15 +32,27 @@ def main() -> None:
     profile = profile_response.json()
 
     with sales_path.open("rb") as sales_file:
+        suggestions = profile["suggestions"]
+        analysis_form = {
+            "date_column": suggestions["date"],
+            "sales_column": suggestions["sales"],
+            "quantity_column": suggestions["quantity"] or "",
+            "unit_price_column": suggestions["unit_price"] or "",
+            "product_column": suggestions["product"] or "",
+            "category_column": suggestions["category"] or "",
+            "store_column": suggestions["store"] or "",
+            "channel_column": suggestions["channel"] or "",
+            "region_column": suggestions["region"] or "",
+            "discount_column": suggestions["discount"] or "",
+            "cost_column": suggestions["cost"] or "",
+            "profit_column": suggestions["profit"] or "",
+            "currency": "USD",
+            "exclude_exact_duplicates": "true",
+        }
         analysis_response = client.post(
             "/api/analyze",
             files={"file": (sales_path.name, sales_file, "text/csv")},
-            data={
-                "date_column": "date",
-                "sales_column": "total_value",
-                "currency": "USD",
-                "exclude_exact_duplicates": "true",
-            },
+            data=analysis_form,
         )
     analysis_response.raise_for_status()
     result = analysis_response.json()
@@ -62,7 +74,7 @@ def main() -> None:
             "total_value",
         ].sum()
     )
-    actual = float(result["report"]["sales_total"])
+    actual = float(result["report"]["metrics"]["sales"]["current"])
 
     assert profile["row_count"] == 641_843
     assert profile["exact_duplicate_candidates"] == 45
@@ -71,11 +83,38 @@ def main() -> None:
     assert result["report"]["week_end"] == week_end.date().isoformat()
     assert math.isclose(actual, expected, abs_tol=0.01)
 
+    expected_profit = None
+    actual_profit = result["report"]["metrics"]["profit"]["current"]
+    if "profit" in source.columns:
+        source["profit"] = pd.to_numeric(source["profit"], errors="coerce")
+        expected_profit = float(
+            source.loc[
+                source["date"].between(week_start, week_end),
+                "profit",
+            ].sum()
+        )
+        assert actual_profit is not None
+        assert math.isclose(float(actual_profit), expected_profit, abs_tol=0.01)
+
+    for dimension, rows in result["report"]["breakdowns"].items():
+        assert math.isclose(
+            sum(float(row["current_sales"]) for row in rows),
+            expected,
+            abs_tol=0.01,
+        ), f"{dimension} breakdown does not reconcile"
+
     print(f"rows={profile['row_count']}")
     print(f"duplicate_candidates={profile['exact_duplicate_candidates']}")
     print(f"week={week_start.date()}..{week_end.date()}")
     print(f"api_sales_total={actual:.2f}")
     print(f"independent_sales_total={expected:.2f}")
+    if expected_profit is not None:
+        print(f"api_profit_total={float(actual_profit):.2f}")
+        print(f"independent_profit_total={expected_profit:.2f}")
+    print(
+        "available_breakdowns="
+        + ",".join(result["report"]["breakdowns"].keys())
+    )
     print("verification=passed")
 
 

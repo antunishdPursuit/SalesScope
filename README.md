@@ -136,6 +136,20 @@ The verified latest complete week is October 20–26, 2025. With the 45 possible
 
 For a quick public demo, upload [`examples/sample-sales.csv`](examples/sample-sales.csv). It contains fictional transaction rows and all optional fields needed to exercise the main report sections.
 
+For a more realistic hosted test, upload
+[`examples/representative-sales.csv`](examples/representative-sales.csv). It is
+a deterministic, date-stratified 7.55 MiB sample of the enriched synthetic
+dataset with 53,479 rows. It preserves the full date range and all category,
+store, channel, product, profit, and discount fields needed by the detailed
+report. Regenerate it with:
+
+```powershell
+cd backend
+python scripts\prepare_public_demo.py `
+  "..\Sales Coordinator Dataset\demo_sales_enriched.csv" `
+  "..\examples\representative-sales.csv"
+```
+
 ## Architecture
 
 ```text
@@ -220,11 +234,12 @@ The frontend accepts these build-time environment variables:
 - `VITE_API_URL` points to the deployed backend;
 - `VITE_MAX_UPLOAD_MB` displays and enforces the matching browser-side limit.
 
-For the free public demo, set both upload-limit variables to `40`. This covers
-the 31.22 MiB raw `bm_sales.csv` file with some upload headroom. It does not
-cover the 90.7 MiB enriched demo file, which is more likely to exhaust the free
-service's memory while Pandas and DuckDB process it. Keep the local defaults at
-`100`. Public-demo users should upload only fictional or non-sensitive data.
+For the free public demo, set both upload-limit variables to `10`. Use the
+7.55 MiB representative file for realistic hosted testing. The 31.22 MiB raw
+sales file caused the free service to restart during processing, and the
+90.7 MiB enriched file requires even more memory. Keep both larger files for
+local testing. The local upload defaults remain `100`. Public-demo users should
+upload only fictional or non-sensitive data.
 
 ## Verify
 

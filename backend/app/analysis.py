@@ -79,6 +79,34 @@ def _dimension(frame: pd.DataFrame, column: str | None) -> pd.Series:
     return values.mask(values.eq(""), pd.NA)
 
 
+def _discount_percentage(
+    frame: pd.DataFrame,
+    column: str | None,
+) -> tuple[pd.Series, str | None]:
+    discount = _numeric(frame, column)
+    if not column:
+        return discount, None
+
+    usable = discount.dropna()
+    uses_fractional_scale = (
+        not usable.empty
+        and usable.between(0, 1).all()
+        and usable.between(0, 1, inclusive="neither").any()
+    )
+    if uses_fractional_scale:
+        return (
+            discount * 100,
+            (
+                f"Discount values from {column} were interpreted as decimal "
+                "fractions and converted to percentage points."
+            ),
+        )
+    return (
+        discount,
+        f"Discount values from {column} were interpreted as percentage points.",
+    )
+
+
 def prepare_analysis(
     frame: pd.DataFrame,
     mappings: ColumnMap,
@@ -121,7 +149,10 @@ def prepare_analysis(
         profit_method = None
         profit_formula = None
 
-    discount = _numeric(frame, mappings.discount)
+    discount, discount_assumption = _discount_percentage(
+        frame,
+        mappings.discount,
+    )
     duplicate_mask = frame.duplicated(keep="first")
     excluded_duplicate_mask = (
         duplicate_mask
@@ -186,6 +217,8 @@ def prepare_analysis(
             else "Possible duplicate rows were kept in this analysis."
         ),
     ]
+    if discount_assumption:
+        assumptions.append(discount_assumption)
 
     receipt = {
         "original_rows": int(len(frame)),

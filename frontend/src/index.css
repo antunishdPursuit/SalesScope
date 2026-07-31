@@ -317,6 +317,43 @@ li {
   color: var(--muted);
 }
 
+.service-status {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  max-width: 32rem;
+  padding: 8px 12px;
+  margin: 2px auto 4px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.4;
+  border-radius: 999px;
+}
+
+.service-status--starting {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+.service-status--ready {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.service-status--delayed {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.service-status__dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .upload-zone input[type="file"] {
   position: absolute;
   width: 1px;
@@ -1521,6 +1558,11 @@ code {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+
+  .loading-spinner {
+    border-right-color: currentColor;
+    animation: none;
   }
 
   *,

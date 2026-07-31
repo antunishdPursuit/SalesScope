@@ -9,6 +9,13 @@ const MAX_UPLOAD_MB =
     ? configuredMaxUploadMb
     : 100
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+const BACKEND_STATUS_DELAY_MS = 1000
+const BACKEND_REQUEST_TIMEOUT_MS = 12000
+const BACKEND_RETRY_DELAY_MS = 3000
+const BACKEND_SLOW_RETRY_DELAY_MS = 12000
+const BACKEND_MAX_ATTEMPTS = 6
+
+type BackendReadiness = 'checking' | 'starting' | 'ready' | 'delayed'
 
 type MappingKey =
   | 'date'
@@ -298,7 +305,70 @@ function App() {
   const [loadingStage, setLoadingStage] = useState<'reading' | 'analyzing' | null>(null)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [error, setError] = useState('')
+  const [backendReadiness, setBackendReadiness] =
+    useState<BackendReadiness>('checking')
   const fileInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let retryTimer: number | undefined
+    let activeRequest: AbortController | null = null
+
+    const statusTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setBackendReadiness((current) =>
+          current === 'checking' ? 'starting' : current,
+        )
+      }
+    }, BACKEND_STATUS_DELAY_MS)
+
+    async function checkBackend(attempt: number) {
+      activeRequest = new AbortController()
+      const requestTimer = window.setTimeout(
+        () => activeRequest?.abort(),
+        BACKEND_REQUEST_TIMEOUT_MS,
+      )
+
+      try {
+        const response = await fetch(`${API_URL}/api/health`, {
+          cache: 'no-store',
+          signal: activeRequest.signal,
+        })
+        if (!response.ok) throw new Error('The analysis service is not ready.')
+
+        if (!cancelled) {
+          window.clearTimeout(statusTimer)
+          setBackendReadiness('ready')
+        }
+      } catch {
+        if (cancelled) return
+
+        if (attempt >= BACKEND_MAX_ATTEMPTS) {
+          setBackendReadiness('delayed')
+          return
+        }
+
+        setBackendReadiness(attempt >= 3 ? 'delayed' : 'starting')
+        retryTimer = window.setTimeout(
+          () => void checkBackend(attempt + 1),
+          attempt >= 3
+            ? BACKEND_SLOW_RETRY_DELAY_MS
+            : BACKEND_RETRY_DELAY_MS,
+        )
+      } finally {
+        window.clearTimeout(requestTimer)
+      }
+    }
+
+    void checkBackend(1)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(statusTimer)
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      activeRequest?.abort()
+    }
+  }, [])
 
   useEffect(() => {
     if (!isLoading || !loadingStage) {
@@ -358,6 +428,7 @@ function App() {
     if (!response.ok) throw new Error(await readError(response))
 
     const nextProfile: Profile = await response.json()
+    setBackendReadiness('ready')
     setProfile(nextProfile)
     setSheetName(nextProfile.selected_sheet ?? '')
     setMappings(
@@ -604,6 +675,28 @@ function App() {
                 <p>
                   Choose one CSV or Excel (.xlsx) file, up to {MAX_UPLOAD_MB} MB.
                 </p>
+                {backendReadiness !== 'checking' && (
+                  <div
+                    className={`service-status service-status--${backendReadiness}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {backendReadiness === 'starting' && (
+                      <span className="loading-spinner" aria-hidden="true" />
+                    )}
+                    {backendReadiness === 'ready' && (
+                      <span className="service-status__dot" aria-hidden="true" />
+                    )}
+                    <span>
+                      {backendReadiness === 'ready' &&
+                        'Analysis service ready.'}
+                      {backendReadiness === 'starting' &&
+                        'Getting the analysis service ready. You can choose a file while it starts.'}
+                      {backendReadiness === 'delayed' &&
+                        'The analysis service is taking longer than expected. You can still choose a file.'}
+                    </span>
+                  </div>
+                )}
                 <button
                   className="button button--primary"
                   type="button"

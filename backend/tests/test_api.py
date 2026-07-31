@@ -274,6 +274,7 @@ def test_detailed_report_reconciles_metrics_drivers_and_risks() -> None:
 
     assert report["discount_summary"]["discounted_sales"] == 350
     assert report["discount_summary"]["discounted_sales_share_pct"] == 70
+    assert round(report["discount_summary"]["average_discount_pct"], 2) == 16.67
     risk_keys = {risk["key"] for risk in report["risks"]}
     assert {"negative_profit", "high_discount"} <= risk_keys
     assert len(report["manager_summary"]) >= 3
@@ -282,6 +283,40 @@ def test_detailed_report_reconciles_metrics_drivers_and_risks() -> None:
     assert coverage["profit"] == "available"
     assert coverage["category"] == "available"
     assert coverage["region"] == "unavailable"
+
+
+def test_analyze_normalizes_fractional_discount_values() -> None:
+    data = b"""date,sales,discount,profit
+2026-07-06,100,0.1,10
+2026-07-12,200,0.2,20
+2026-07-13,150,0.2,15
+2026-07-15,300,0.5,-30
+2026-07-19,50,0,5
+"""
+    response = client.post(
+        "/api/analyze",
+        files=upload(data),
+        data={
+            "date_column": "date",
+            "sales_column": "sales",
+            "discount_column": "discount",
+            "profit_column": "profit",
+            "currency": "USD",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    summary = body["report"]["discount_summary"]
+    assert round(summary["average_discount_pct"], 2) == 23.33
+    assert summary["high_discount_rows"] == 2
+    assert "high_discount" in {
+        risk["key"] for risk in body["report"]["risks"]
+    }
+    assert any(
+        "decimal fractions" in assumption
+        for assumption in body["receipt"]["assumptions"]
+    )
 
 
 def test_verification_page_data_matches_report_math() -> None:

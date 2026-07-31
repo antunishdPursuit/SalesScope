@@ -185,14 +185,27 @@ const coreFields: Array<{
   hint?: string
   required?: boolean
 }> = [
-  { key: 'date', label: 'Transaction date', required: true },
+  {
+    key: 'date',
+    label: 'Transaction date',
+    hint: 'The date the sale happened.',
+    required: true,
+  },
   {
     key: 'sales',
     label: 'Sales amount',
-    hint: 'Optional only when quantity and unit price are both mapped.',
+    hint: 'The total sales value for one row. Do not use profit.',
   },
-  { key: 'quantity', label: 'Quantity' },
-  { key: 'unit_price', label: 'Unit price' },
+  {
+    key: 'quantity',
+    label: 'Quantity',
+    hint: 'The number of units sold.',
+  },
+  {
+    key: 'unit_price',
+    label: 'Unit price',
+    hint: 'The price of one unit. Leave blank when the file already has a sales total.',
+  },
 ]
 
 const analysisFields: Array<{
@@ -207,7 +220,11 @@ const analysisFields: Array<{
   { key: 'region', label: 'Region', hint: 'Regional performance' },
   { key: 'discount', label: 'Discount', hint: 'Discount levels and risks' },
   { key: 'cost', label: 'Unit cost', hint: 'Profit when quantity is available' },
-  { key: 'profit', label: 'Profit', hint: 'Direct profit and margin reporting' },
+  {
+    key: 'profit',
+    label: 'Profit',
+    hint: 'Sales remaining after costs. Profit is not unit price.',
+  },
 ]
 
 function formatNumber(value: number, maximumFractionDigits = 0) {
@@ -532,14 +549,16 @@ function App() {
 
       {view === 'prepare' && (
         <main className={`main-content prepare-page ${profile ? 'has-profile' : 'is-empty'}`}>
-          <section className="prepare-intro" aria-labelledby="prepare-title">
-            <h1 id="prepare-title">Turn a sales file into answers your manager can use.</h1>
-            <p className="intro">
-              Upload one CSV or Excel sheet. SalesScope identifies common columns,
-              lets you confirm how they should be used, and creates a weekly report
-              with the insights your data supports.
-            </p>
-          </section>
+          {!profile && (
+            <section className="prepare-intro" aria-labelledby="prepare-title">
+              <h1 id="prepare-title">Turn a sales file into answers your manager can use.</h1>
+              <p className="intro">
+                Upload one CSV or Excel sheet. SalesScope identifies common columns,
+                lets you confirm how they should be used, and creates a weekly report
+                with the insights your data supports.
+              </p>
+            </section>
+          )}
 
           {error && (
             <div className="notice notice--error" role="alert">
@@ -656,7 +675,14 @@ function App() {
                     <span className="section-number">1</span>
                     <div>
                       <h2 id="core-mapping-title">Confirm the core fields</h2>
-                      <p>These fields determine whether a weekly report can be created.</p>
+                      <p>
+                        Match each SalesScope field to the correct column in your file.
+                        Review the suggested matches before continuing.
+                      </p>
+                      <p className="mapping-rule">
+                        <strong>Required:</strong> transaction date plus sales amount, or
+                        transaction date plus quantity × unit price.
+                      </p>
                     </div>
                   </div>
                   <span className={`status-badge ${canAnalyze ? 'is-ready' : 'needs-attention'}`}>
@@ -684,8 +710,12 @@ function App() {
                     <div>
                       <h2 id="fuller-report-title">Choose the deeper analysis</h2>
                       <p>
-                        SalesScope recognized {mappedAnalysisCount} of 8 optional
-                        analysis fields.
+                        These optional fields unlock product, location, discount, and
+                        profit insights. Map only fields that exist in your file and
+                        leave the rest blank.
+                      </p>
+                      <p className="recognition-summary">
+                        SalesScope recognized {mappedAnalysisCount} of 8 optional fields.
                       </p>
                     </div>
                   </div>
@@ -713,7 +743,10 @@ function App() {
                     <span className="section-number">3</span>
                     <div>
                       <h2 id="review-choices-title">Review report choices</h2>
-                      <p>Confirm how SalesScope should interpret this file.</p>
+                      <p>
+                        Confirm the file's currency and decide how exact matching rows
+                        should be handled.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1562,6 +1595,7 @@ function MappingRow({
   onChange: (value: string) => void
 }) {
   const id = `mapping-${field.key}`
+  const hintId = `${id}-hint`
   return (
     <div className="mapping-row">
       <div>
@@ -1569,9 +1603,14 @@ function MappingRow({
           {field.label}
           {field.required && <span className="required">Required</span>}
         </label>
-        {field.hint && <small>{field.hint}</small>}
+        {field.hint && <small id={hintId}>{field.hint}</small>}
       </div>
-      <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
+      <select
+        id={id}
+        value={value}
+        aria-describedby={field.hint ? hintId : undefined}
+        onChange={(event) => onChange(event.target.value)}
+      >
         <option value="">Not provided</option>
         {columns.map((column) => (
           <option key={column} value={column}>

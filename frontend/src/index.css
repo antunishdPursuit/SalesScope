@@ -372,6 +372,12 @@ li {
   margin: 0 0 24px;
 }
 
+.prepare-page.has-profile .sheet-field {
+  margin-right: auto;
+  margin-left: auto;
+  text-align: center;
+}
+
 .form-field {
   display: grid;
   gap: 8px;
@@ -419,6 +425,31 @@ select {
   color: var(--muted);
 }
 
+.prepare-page.has-profile .section-heading {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.prepare-page.has-profile .section-heading > div {
+  flex-direction: column;
+  align-items: center;
+}
+
+.prepare-page.has-profile .section-heading p {
+  max-width: 66ch;
+}
+
+.mapping-rule,
+.recognition-summary {
+  margin-top: 10px;
+}
+
+.mapping-rule strong {
+  color: var(--text);
+}
+
 .section-number {
   display: grid;
   flex: 0 0 auto;
@@ -451,6 +482,9 @@ select {
 
 .mapping-card {
   overflow: hidden;
+  max-width: 56rem;
+  margin-right: auto;
+  margin-left: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
@@ -475,6 +509,7 @@ select {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  justify-content: center;
   font-weight: 750;
 }
 
@@ -482,6 +517,13 @@ select {
   display: block;
   margin-top: 4px;
   color: var(--muted);
+  text-align: center;
+}
+
+.mapping-row select {
+  width: 100%;
+  max-width: 28rem;
+  justify-self: center;
 }
 
 .required {
@@ -495,6 +537,7 @@ select {
 }
 
 .mapping-status {
+  justify-self: center;
   color: var(--muted);
   font-size: 0.875rem;
   font-weight: 700;
@@ -507,17 +550,27 @@ select {
 .mapping-details > summary {
   margin-bottom: 14px;
   font-weight: 750;
+  text-align: center;
 }
 
 .choice-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
   gap: 20px;
+  max-width: 56rem;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.choice-grid .form-field {
+  align-content: center;
+  text-align: center;
 }
 
 .duplicate-choice {
   padding: 16px;
   margin: 0;
+  text-align: center;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
@@ -532,6 +585,7 @@ select {
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  justify-content: center;
   line-height: 1.4;
 }
 
@@ -555,6 +609,21 @@ select {
 .readiness-card.is-ready {
   border-color: #7bc5a1;
   background: var(--success-bg);
+}
+
+.prepare-page.has-profile .readiness-card {
+  flex-direction: column;
+  text-align: center;
+}
+
+.prepare-page.has-profile .readiness-card > div {
+  flex-direction: column;
+  align-items: center;
+}
+
+.prepare-page.has-profile .readiness-card p {
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .readiness-card > div {
@@ -1346,6 +1415,14 @@ code {
 
   .mapping-status {
     justify-self: start;
+  }
+
+  .prepare-page.has-profile .mapping-status {
+    justify-self: center;
+  }
+
+  .prepare-page.has-profile .readiness-card {
+    align-items: center;
   }
 
   .readiness-card,

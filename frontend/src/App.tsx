@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import './index.css'
 
@@ -253,12 +253,16 @@ function getErrorMessage(error: unknown) {
     /networkerror|failed to fetch|load failed/i.test(error.message)
   ) {
     return (
-      'The analysis service became unavailable while processing this file. ' +
-      'Try the representative demo file or a smaller upload.'
+      'The analysis service may be waking up or unavailable right now. ' +
+      'Wait a moment and try again. If the file is large, try a smaller upload.'
     )
   }
   if (error instanceof Error) return error.message
   return 'Something went wrong. Please try again.'
+}
+
+function isSupportedUpload(file: File) {
+  return /\.(csv|xlsx)$/i.test(file.name)
 }
 
 function App() {
@@ -274,8 +278,40 @@ function App() {
   const [copyStatus, setCopyStatus] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [loadingStage, setLoadingStage] = useState<'reading' | 'analyzing' | null>(null)
+  const [loadingMessage, setLoadingMessage] = useState('')
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!isLoading || !loadingStage) {
+      setLoadingMessage('')
+      return
+    }
+
+    const messageTimer = window.setTimeout(
+      () => {
+        setLoadingMessage(
+          loadingStage === 'reading'
+            ? 'Still reading your file. Larger files may take a little longer.'
+            : 'Checking your rows and building the report…',
+        )
+      },
+      2500,
+    )
+    const patienceTimer = window.setTimeout(() => {
+      setLoadingMessage(
+        loadingStage === 'reading'
+          ? 'Still reading your file. A waking service may take a little longer.'
+          : 'Still working. A waking service or larger file may take a little longer.',
+      )
+    }, 10000)
+
+    return () => {
+      window.clearTimeout(messageTimer)
+      window.clearTimeout(patienceTimer)
+    }
+  }, [isLoading, loadingStage])
 
   const canAnalyze = Boolean(
     mappings.date &&
@@ -322,6 +358,15 @@ function App() {
     const selectedFile = event.target.files?.[0]
     if (!selectedFile) return
 
+    if (!isSupportedUpload(selectedFile)) {
+      setFile(null)
+      setProfile(null)
+      setAnalysis(null)
+      setError('This file type is not supported. Choose a CSV or .xlsx file.')
+      event.target.value = ''
+      return
+    }
+
     if (selectedFile.size > MAX_UPLOAD_BYTES) {
       setFile(null)
       setProfile(null)
@@ -332,6 +377,8 @@ function App() {
     }
 
     setIsLoading(true)
+    setLoadingStage('reading')
+    setLoadingMessage('Reading your file…')
     setError('')
     setAnalysis(null)
     setView('prepare')
@@ -344,6 +391,7 @@ function App() {
       setError(getErrorMessage(caughtError))
     } finally {
       setIsLoading(false)
+      setLoadingStage(null)
       event.target.value = ''
     }
   }
@@ -353,6 +401,8 @@ function App() {
     const selectedSheet = event.target.value
     setSheetName(selectedSheet)
     setIsLoading(true)
+    setLoadingStage('reading')
+    setLoadingMessage('Reading your file…')
     setError('')
     try {
       await profileFile(file, selectedSheet)
@@ -360,6 +410,7 @@ function App() {
       setError(getErrorMessage(caughtError))
     } finally {
       setIsLoading(false)
+      setLoadingStage(null)
     }
   }
 
@@ -386,6 +437,8 @@ function App() {
     }
 
     setIsLoading(true)
+    setLoadingStage('analyzing')
+    setLoadingMessage('Starting analysis…')
     setError('')
     try {
       const response = await fetch(`${API_URL}/api/analyze`, {
@@ -406,6 +459,7 @@ function App() {
       setError(getErrorMessage(caughtError))
     } finally {
       setIsLoading(false)
+      setLoadingStage(null)
     }
   }
 
@@ -477,14 +531,13 @@ function App() {
       </header>
 
       {view === 'prepare' && (
-        <main className="main-content prepare-page">
+        <main className={`main-content prepare-page ${profile ? 'has-profile' : 'is-empty'}`}>
           <section className="prepare-intro" aria-labelledby="prepare-title">
-            <div className="eyebrow">Prepare weekly report</div>
             <h1 id="prepare-title">Turn a sales file into answers your manager can use.</h1>
             <p className="intro">
-              Upload one CSV or Excel sheet. SalesScope will recognize common
-              columns, show what the file can support, and explain every cleanup
-              choice before creating the report.
+              Upload one CSV or Excel sheet. SalesScope identifies common columns,
+              lets you confirm how they should be used, and creates a weekly report
+              with the insights your data supports.
             </p>
           </section>
 
@@ -495,20 +548,34 @@ function App() {
             </div>
           )}
 
+          {isLoading && !profile && (
+            <div className="notice notice--info loading-notice" role="status" aria-live="polite">
+              <span className="loading-spinner" aria-hidden="true" />
+              <span>{loadingMessage}</span>
+            </div>
+          )}
+
           {!profile ? (
             <section className="upload-card" aria-labelledby="upload-title">
               <div className="requirements">
                 <h2 id="upload-title">What your file needs</h2>
-                <p>
-                  At minimum, include a <strong>transaction date</strong> and a{' '}
-                  <strong>sales amount</strong>. Quantity and unit price can be used
-                  to calculate sales when no total is provided.
-                </p>
+                <p>At minimum, your file needs:</p>
+                <ul>
+                  <li>A transaction date</li>
+                  <li>A sales amount, or quantity and unit price together</li>
+                  <li>One row for each transaction line</li>
+                </ul>
                 <details>
                   <summary>Fields that unlock a fuller report</summary>
                   <p>
-                    Quantity, product, category, store or location, channel,
-                    discount, and cost or profit.
+                    Product or category for product performance; region, store, or
+                    location for geographic performance; discount for discount
+                    review; cost or profit for margin analysis; and channel for
+                    channel performance.
+                  </p>
+                  <p>
+                    Missing optional fields do not stop the report. SalesScope marks
+                    the related analysis as limited or unavailable.
                   </p>
                 </details>
               </div>
@@ -535,11 +602,6 @@ function App() {
                 />
               </div>
 
-              <p className="privacy-note">
-                Your original file stays unchanged. This MVP processes uploads
-                temporarily and does not save report history. On the public
-                demo, use sample or non-sensitive data only.
-              </p>
             </section>
           ) : (
             <form onSubmit={handleAnalyze}>
@@ -714,6 +776,12 @@ function App() {
                     </p>
                   </div>
                 </div>
+                {isLoading && (
+                  <p className="loading-status" role="status" aria-live="polite">
+                    <span className="loading-spinner" aria-hidden="true" />
+                    {loadingMessage}
+                  </p>
+                )}
                 <button
                   className="button button--primary button--large"
                   type="submit"

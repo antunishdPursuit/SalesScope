@@ -311,6 +311,7 @@ def _coverage(
     bundle: AnalysisBundle,
     current: pd.DataFrame,
     prior: pd.DataFrame,
+    complete_weeks: int,
 ) -> list[dict[str, str]]:
     mapped = bundle.mappings
     coverage: list[dict[str, str]] = [
@@ -364,13 +365,6 @@ def _coverage(
         }
     )
 
-    complete_weeks = (
-        bundle.analysis.assign(
-            week_start=lambda data: data["transaction_date"]
-            - pd.to_timedelta(data["transaction_date"].dt.weekday, unit="D")
-        )["week_start"]
-        .nunique()
-    )
     coverage.append(
         {
             "key": "trend",
@@ -386,32 +380,69 @@ def _coverage(
     return coverage
 
 
-def _trend(
+def _weekly_history(
     analysis: pd.DataFrame,
     current_start: pd.Timestamp,
 ) -> list[dict[str, Any]]:
-    trend_start = current_start - pd.Timedelta(weeks=7)
-    trend = analysis.copy()
-    trend["week_start"] = trend["transaction_date"] - pd.to_timedelta(
-        trend["transaction_date"].dt.weekday,
+    history = analysis.copy()
+    history["week_start"] = history["transaction_date"] - pd.to_timedelta(
+        history["transaction_date"].dt.weekday,
         unit="D",
     )
-    trend = trend[
-        trend["week_start"].between(trend_start, current_start)
+    earliest_date = history["transaction_date"].min().normalize()
+    first_complete_start = earliest_date - pd.Timedelta(
+        days=int(earliest_date.weekday())
+    )
+    if int(earliest_date.weekday()) > 0:
+        first_complete_start += pd.Timedelta(days=7)
+
+    history = history[
+        history["week_start"].between(first_complete_start, current_start)
     ]
     rows: list[dict[str, Any]] = []
-    for week_start, group in trend.groupby("week_start", sort=True):
+    prior_week_start: pd.Timestamp | None = None
+    prior_sales: float | None = None
+    for week_start, group in history.groupby("week_start", sort=True):
+        sales = float(group["sales_amount"].sum())
         profit = _safe_sum(group["profit"])
+        margin = profit / sales * 100 if profit is not None and sales else None
+        has_prior_calendar_week = (
+            prior_week_start is not None
+            and week_start - prior_week_start == pd.Timedelta(days=7)
+        )
+        change = (
+            _metric(sales, prior_sales)
+            if has_prior_calendar_week
+            else _metric(sales, None)
+        )
         rows.append(
             {
                 "week_start": week_start.date().isoformat(),
                 "week_end": (week_start + pd.Timedelta(days=6)).date().isoformat(),
-                "sales": float(group["sales_amount"].sum()),
+                "sales": sales,
                 "profit": profit,
+                "margin_pct": margin,
                 "units": _safe_sum(group["quantity"]),
+                "sales_change": change["absolute_change"],
+                "sales_change_pct": change["percentage_change"],
             }
         )
+        prior_week_start = week_start
+        prior_sales = sales
     return rows
+
+
+def _trend(weekly_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "week_start": row["week_start"],
+            "week_end": row["week_end"],
+            "sales": row["sales"],
+            "profit": row["profit"],
+            "units": row["units"],
+        }
+        for row in weekly_history[-8:]
+    ]
 
 
 def _breakdown(
@@ -663,7 +694,8 @@ def build_report(
             "high_discount_rows": int(len(high_discount)),
         }
 
-    coverage = _coverage(bundle, current, prior)
+    weekly_history = _weekly_history(analysis, current_start)
+    coverage = _coverage(bundle, current, prior, len(weekly_history))
     summary = _manager_summary(metrics, breakdowns, current, currency)
 
     return {
@@ -673,7 +705,8 @@ def build_report(
         "prior_week_start": prior_start.date().isoformat(),
         "prior_week_end": prior_end.date().isoformat(),
         "metrics": metrics,
-        "trend": _trend(analysis, current_start),
+        "trend": _trend(weekly_history),
+        "weekly_history": weekly_history,
         "breakdowns": breakdowns,
         "drivers": drivers,
         "discount_summary": discount_summary,

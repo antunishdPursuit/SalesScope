@@ -997,6 +997,39 @@ select {
   border-radius: 10px;
 }
 
+.weekly-history {
+  padding-top: 20px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.weekly-history summary {
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.weekly-history > p {
+  max-width: 70ch;
+  margin: 10px 0 16px;
+  color: var(--muted);
+}
+
+.weekly-history-table tbody tr.is-current {
+  background: var(--surface-muted);
+}
+
+.week-label strong,
+.week-label small {
+  display: block;
+}
+
+.week-label small {
+  margin-top: 4px;
+  color: var(--primary-hover);
+  font-size: 0.75rem;
+}
+
 table {
   width: 100%;
   min-width: 760px;

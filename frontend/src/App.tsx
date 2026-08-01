@@ -61,6 +61,12 @@ type TrendRow = {
   units: number | null
 }
 
+type WeeklyHistoryRow = TrendRow & {
+  margin_pct: number | null
+  sales_change: number | null
+  sales_change_pct: number | null
+}
+
 type BreakdownRow = {
   label: string
   current_sales: number
@@ -93,6 +99,7 @@ type Report = {
     sales_rows: Metric
   }
   trend: TrendRow[]
+  weekly_history: WeeklyHistoryRow[]
   breakdowns: Record<string, BreakdownRow[]>
   drivers: Record<
     string,
@@ -1012,19 +1019,40 @@ function App() {
             </div>
           </section>
 
-          {analysis.report.trend.length > 1 && (
-            <section className="report-section" aria-labelledby="trend-title">
+          {analysis.report.weekly_history.length > 0 && (
+            <section className="report-section" aria-labelledby="history-title">
               <div className="section-title-row">
                 <div>
                   <div className="eyebrow">Movement</div>
-                  <h2 id="trend-title">Eight-week sales trend</h2>
-                  <p>Complete Monday-through-Sunday reporting periods.</p>
+                  <h2 id="history-title">Sales over time</h2>
+                  <p>
+                    Review the latest eight weeks first, then open the complete
+                    weekly history when you need more context.
+                  </p>
                 </div>
               </div>
-              <TrendChart
-                rows={analysis.report.trend}
-                currency={analysis.report.currency}
-              />
+              {analysis.report.trend.length > 1 && (
+                <TrendChart
+                  rows={analysis.report.trend}
+                  currency={analysis.report.currency}
+                />
+              )}
+              <details className="weekly-history">
+                <summary>
+                  View all weekly history ({formatNumber(
+                    analysis.report.weekly_history.length,
+                  )} weeks)
+                </summary>
+                <p>
+                  Complete Monday-through-Sunday weeks represented in this file,
+                  newest first. Missing calendar weeks are not treated as zero sales.
+                </p>
+                <WeeklyHistoryTable
+                  rows={analysis.report.weekly_history}
+                  currency={analysis.report.currency}
+                  currentWeekStart={analysis.report.week_start}
+                />
+              </details>
             </section>
           )}
 
@@ -1665,6 +1693,88 @@ function BreakdownTable({
               )}
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function WeeklyHistoryTable({
+  rows,
+  currency,
+  currentWeekStart,
+}: {
+  rows: WeeklyHistoryRow[]
+  currency: string
+  currentWeekStart: string
+}) {
+  const newestFirst = [...rows].reverse()
+  const hasProfit = rows.some((row) => row.profit !== null)
+  const hasUnits = rows.some((row) => row.units !== null)
+
+  return (
+    <div className="table-wrap weekly-history-table">
+      <table>
+        <caption>Complete weekly sales history, newest week first</caption>
+        <thead>
+          <tr>
+            <th scope="col">Week</th>
+            <th scope="col">Sales</th>
+            {hasProfit && <th scope="col">Profit</th>}
+            {hasProfit && <th scope="col">Margin</th>}
+            {hasUnits && <th scope="col">Units</th>}
+            <th scope="col">Change from prior week</th>
+          </tr>
+        </thead>
+        <tbody>
+          {newestFirst.map((row) => {
+            const isCurrent = row.week_start === currentWeekStart
+            const changeClass =
+              row.sales_change === null
+                ? undefined
+                : row.sales_change >= 0
+                  ? 'is-positive'
+                  : 'is-negative'
+            return (
+              <tr className={isCurrent ? 'is-current' : undefined} key={row.week_start}>
+                <th className="week-label" scope="row">
+                  <strong>{formatDateRange(row.week_start, row.week_end)}</strong>
+                  {isCurrent && <small>Current report</small>}
+                </th>
+                <td>{formatCurrency(row.sales, currency)}</td>
+                {hasProfit && (
+                  <td>
+                    {row.profit === null
+                      ? '—'
+                      : formatCurrency(row.profit, currency)}
+                  </td>
+                )}
+                {hasProfit && (
+                  <td>
+                    {row.margin_pct === null ? '—' : formatPercent(row.margin_pct)}
+                  </td>
+                )}
+                {hasUnits && (
+                  <td>{row.units === null ? '—' : formatNumber(row.units)}</td>
+                )}
+                <td className={changeClass}>
+                  {row.sales_change === null ? (
+                    'No prior calendar week'
+                  ) : (
+                    <>
+                      {row.sales_change >= 0 ? '+' : '−'}
+                      {formatCurrency(Math.abs(row.sales_change), currency)}
+                      {row.sales_change_pct !== null &&
+                        ` (${row.sales_change_pct >= 0 ? '+' : '−'}${formatNumber(
+                          Math.abs(row.sales_change_pct),
+                          1,
+                        )}%)`}
+                    </>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

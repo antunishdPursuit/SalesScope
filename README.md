@@ -77,11 +77,18 @@ The minimum fields support weekly sales totals and prior-week comparisons. Produ
 
 This MVP does not support PDFs, images, `.xls` workbooks, multiple files at once, opportunity-pipeline data, forecasting, or automatic decisions. It also cannot determine whether two identical rows are true duplicates without a reliable transaction-line identifier, so it asks the user before excluding them.
 
-The current backend reads each upload into process memory and creates a temporary in-memory DuckDB table; it does not intentionally save the uploaded file. A production deployment still needs an approved security, retention, access-control, and privacy policy. Until then, users should not upload confidential customer information or other sensitive business data.
+The current backend reads each upload into process memory and keeps the cleaned
+analysis in a bounded temporary session cache. The default session expires
+after 30 minutes of inactivity, and a service restart clears it immediately.
+SalesScope does not intentionally save the uploaded file or cleaned data to
+permanent storage. A production deployment still needs an approved security,
+retention, access-control, and privacy policy. Until then, users should not
+upload confidential customer information or other sensitive business data.
 
 ## Trust and cleanup rules
 
-SalesScope keeps the raw upload unchanged and creates a temporary DuckDB analysis table.
+SalesScope keeps the raw upload unchanged and creates a temporary cleaned
+analysis in process memory.
 
 The product must report:
 
@@ -106,10 +113,13 @@ The working MVP supports:
 - manual correction of those mappings;
 - user-controlled exclusion of possible duplicate rows;
 - invalid-date and invalid-sales reporting;
-- the latest complete Monday-through-Sunday period and prior-week comparison;
+- every complete Monday-through-Sunday period represented in the file, with a
+  report-week selector and prior-calendar-week comparison;
 - sales, profit, profit margin, and units-sold headline metrics when supported;
 - an eight-week sales trend with an expandable table of every complete
   reporting week represented in the uploaded file;
+- temporary reuse of the cleaned analysis so users can switch reporting weeks
+  without uploading or cleaning the file again;
 - category, store, product, channel, and region breakdowns when supported;
 - performance drivers, discount findings, and risk flags;
 - a rule-based manager summary;
@@ -177,15 +187,18 @@ React + TypeScript + Vite
         v
 FastAPI
         |
-        | temporary raw table and analysis table
+        | temporary cleaned analysis session
         v
-DuckDB
+Pandas
 ```
 
 - The React interface manages report preparation, reporting, and optional verification.
 - FastAPI validates requests and returns the data-quality receipt and report.
-- DuckDB performs the weekly aggregation.
-- Pandas reads CSV and Excel inputs before they are registered with DuckDB.
+- Pandas reads CSV and Excel inputs, cleans mapped fields, and performs weekly
+  calculations.
+- The backend keeps at most a small configured number of temporary analysis
+  sessions. The browser caches weekly reports already viewed during the open
+  page session.
 
 ## Repository structure
 
@@ -193,6 +206,7 @@ DuckDB
 backend/
   app/analysis.py
   app/main.py
+  app/session_cache.py
   scripts/prepare_demo_upload.py
   scripts/verify_demo_dataset.py
   tests/test_api.py
@@ -245,7 +259,11 @@ SalesScope can deploy as two native Render services without Docker:
 The backend accepts these environment variables:
 
 - `MAX_UPLOAD_MB` controls the server-side upload limit and defaults to `100`;
-- `CORS_ORIGINS` is a comma-separated list of deployed frontend addresses.
+- `CORS_ORIGINS` is a comma-separated list of deployed frontend addresses;
+- `ANALYSIS_SESSION_TTL_SECONDS` controls the inactivity timeout and defaults
+  to `1800`; and
+- `MAX_ANALYSIS_SESSIONS` bounds the number of cleaned analyses retained in
+  memory and defaults to `2`.
 
 The frontend accepts these build-time environment variables:
 

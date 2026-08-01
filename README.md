@@ -108,7 +108,8 @@ The working MVP supports:
 - invalid-date and invalid-sales reporting;
 - the latest complete Monday-through-Sunday period and prior-week comparison;
 - sales, profit, profit margin, and units-sold headline metrics when supported;
-- an eight-week sales trend;
+- an eight-week sales trend with an expandable table of every complete
+  reporting week represented in the uploaded file;
 - category, store, product, channel, and region breakdowns when supported;
 - performance drivers, discount findings, and risk flags;
 - a rule-based manager summary;

@@ -285,6 +285,59 @@ def test_detailed_report_reconciles_metrics_drivers_and_risks() -> None:
     assert coverage["region"] == "unavailable"
 
 
+def test_weekly_history_keeps_complete_represented_weeks_and_calendar_changes() -> None:
+    data = b"""date,sales,quantity,profit
+2026-01-03,50,1,5
+2026-01-05,100,2,10
+2026-01-11,200,3,40
+2026-01-12,150,2,20
+2026-01-18,50,1,10
+2026-01-26,400,4,60
+2026-02-01,100,2,15
+"""
+    response = client.post(
+        "/api/analyze",
+        files=upload(data),
+        data={
+            "date_column": "date",
+            "sales_column": "sales",
+            "quantity_column": "quantity",
+            "profit_column": "profit",
+            "currency": "USD",
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.json()["report"]
+    history = report["weekly_history"]
+
+    assert [row["week_start"] for row in history] == [
+        "2026-01-05",
+        "2026-01-12",
+        "2026-01-26",
+    ]
+    assert history[0]["sales"] == 300
+    assert history[0]["profit"] == 50
+    assert history[0]["units"] == 5
+    assert round(history[0]["margin_pct"], 2) == 16.67
+    assert history[0]["sales_change"] is None
+    assert history[1]["sales_change"] == -100
+    assert round(history[1]["sales_change_pct"], 2) == -33.33
+    assert history[2]["sales"] == 500
+    assert history[2]["sales_change"] is None
+    assert report["trend"] == [
+        {
+            key: row[key]
+            for key in ("week_start", "week_end", "sales", "profit", "units")
+        }
+        for row in history
+    ]
+    trend_coverage = next(
+        item for item in report["coverage"] if item["key"] == "trend"
+    )
+    assert trend_coverage["reason"] == "3 reporting weeks are available."
+
+
 def test_analyze_normalizes_fractional_discount_values() -> None:
     data = b"""date,sales,discount,profit
 2026-07-06,100,0.1,10

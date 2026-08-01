@@ -698,9 +698,9 @@ function App() {
                       {backendReadiness === 'ready' &&
                         'Analysis service ready.'}
                       {backendReadiness === 'starting' &&
-                        'Getting the analysis service ready. You can choose a file while it starts.'}
+                        'Getting the analysis service ready. File upload will be available when it is ready.'}
                       {backendReadiness === 'delayed' &&
-                        'The analysis service is taking longer than expected. You can still choose a file.'}
+                        'The analysis service could not be reached. Refresh the page to try again.'}
                     </span>
                   </div>
                 )}
@@ -708,9 +708,15 @@ function App() {
                   className="button button--primary"
                   type="button"
                   onClick={() => fileInput.current?.click()}
-                  disabled={isLoading}
+                  disabled={isLoading || backendReadiness !== 'ready'}
                 >
-                  {isLoading ? 'Reading file…' : 'Choose file'}
+                  {isLoading
+                    ? 'Reading file…'
+                    : backendReadiness === 'ready'
+                      ? 'Choose file'
+                      : backendReadiness === 'delayed'
+                        ? 'Service unavailable'
+                        : 'Starting service…'}
                 </button>
                 <input
                   ref={fileInput}
@@ -718,6 +724,7 @@ function App() {
                   type="file"
                   accept=".csv,.xlsx"
                   onChange={handleFileChange}
+                  disabled={isLoading || backendReadiness !== 'ready'}
                 />
               </div>
 

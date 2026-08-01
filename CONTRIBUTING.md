@@ -84,7 +84,7 @@ git log --oneline --decorate -10
 
 ## Data policy
 
-Do not commit the full Kaggle ZIP, raw CSV files, user uploads, temporary DuckDB files, or files containing customer personal information.
+Do not commit the full Kaggle ZIP, raw CSV files, user uploads, temporary analysis files, or files containing customer personal information.
 
 Keep:
 

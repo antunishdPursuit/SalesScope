@@ -56,6 +56,7 @@ def test_analyze_uses_latest_complete_week_and_reports_cleanup() -> None:
 
     assert response.status_code == 200
     body = response.json()
+    assert body["analysis_id"]
     assert body["receipt"]["original_rows"] == 8
     assert body["receipt"]["excluded_duplicate_rows"] == 1
     assert body["receipt"]["invalid_date_rows"] == 1
@@ -66,6 +67,80 @@ def test_analyze_uses_latest_complete_week_and_reports_cleanup() -> None:
     assert body["report"]["metrics"]["sales"]["current"] == 400
     assert body["report"]["metrics"]["sales"]["prior"] == 300
     assert body["report"]["metrics"]["sales"]["absolute_change"] == 100
+
+
+def test_selected_week_uses_the_existing_analysis_session() -> None:
+    response = client.post(
+        "/api/analyze",
+        files=upload(),
+        data={
+            "date_column": "order_date",
+            "sales_column": "revenue",
+            "product_column": "product",
+            "currency": "USD",
+            "exclude_exact_duplicates": "true",
+        },
+    )
+    body = response.json()
+
+    selected = client.get(
+        f"/api/analyses/{body['analysis_id']}/reports/2026-07-06"
+    )
+
+    assert selected.status_code == 200
+    selected_body = selected.json()
+    assert selected_body["analysis_id"] == body["analysis_id"]
+    assert selected_body["report"]["week_start"] == "2026-07-06"
+    assert selected_body["report"]["is_latest_week"] is False
+    assert selected_body["report"]["metrics"]["sales"]["current"] == 300
+    assert selected_body["report"]["metrics"]["sales"]["prior"] is None
+    assert all(
+        row["prior_sales"] is None and row["sales_change"] is None
+        for row in selected_body["report"]["breakdowns"]["product"]
+    )
+    assert selected_body["report"]["drivers"]["product"] == {
+        "increases": [],
+        "declines": [],
+    }
+    assert selected_body["verification"]["week_start"] == "2026-07-06"
+
+    verification = client.get(
+        f"/api/analyses/{body['analysis_id']}/reports/2026-07-06/verification.csv"
+    )
+
+    assert verification.status_code == 200
+    assert "salescope-2026-07-06-verification.csv" in (
+        verification.headers["content-disposition"]
+    )
+    verification_rows = pd.read_csv(BytesIO(verification.content))
+    assert set(verification_rows["report_period"]) == {"current"}
+
+
+def test_selected_week_rejects_unavailable_week_and_expired_session() -> None:
+    response = client.post(
+        "/api/analyze",
+        files=upload(),
+        data={
+            "date_column": "order_date",
+            "sales_column": "revenue",
+            "currency": "USD",
+        },
+    )
+    analysis_id = response.json()["analysis_id"]
+
+    unavailable = client.get(
+        f"/api/analyses/{analysis_id}/reports/2026-06-29"
+    )
+    expired = client.get(
+        "/api/analyses/missing-session/reports/2026-07-06"
+    )
+
+    assert unavailable.status_code == 400
+    assert unavailable.json()["detail"] == (
+        "Choose a complete reporting week available in this analysis."
+    )
+    assert expired.status_code == 410
+    assert "expired" in expired.json()["detail"].lower()
 
 
 def test_analyze_can_calculate_sales_from_quantity_and_price() -> None:

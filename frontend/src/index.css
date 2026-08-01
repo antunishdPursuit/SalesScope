@@ -737,6 +737,23 @@ select {
   color: var(--muted);
 }
 
+.report-week-control {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 360px);
+  margin-top: 18px;
+}
+
+.report-week-control label {
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.report-week-control span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .report-heading__actions {
   display: flex;
   flex-wrap: wrap;
@@ -1028,6 +1045,21 @@ select {
   margin-top: 4px;
   color: var(--primary-hover);
   font-size: 0.75rem;
+}
+
+.weekly-history-week-button {
+  padding: 0;
+  color: var(--primary-hover);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  background: transparent;
+}
+
+.weekly-history-week-button:hover {
+  color: var(--primary);
 }
 
 table {

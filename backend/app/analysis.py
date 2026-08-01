@@ -287,6 +287,7 @@ def _metric(
 
 def _period_frames(
     analysis: pd.DataFrame,
+    current_start: pd.Timestamp,
 ) -> tuple[
     pd.DataFrame,
     pd.DataFrame,
@@ -295,9 +296,10 @@ def _period_frames(
     pd.Timestamp,
     pd.Timestamp,
 ]:
-    current_start, current_end, prior_start, prior_end = complete_reporting_period(
-        analysis["transaction_date"]
-    )
+    current_start = current_start.normalize()
+    current_end = current_start + pd.Timedelta(days=6)
+    prior_start = current_start - pd.Timedelta(days=7)
+    prior_end = current_start - pd.Timedelta(days=1)
     current = analysis[
         analysis["transaction_date"].between(current_start, current_end)
     ]
@@ -432,7 +434,11 @@ def _weekly_history(
     return rows
 
 
-def _trend(weekly_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _trend(
+    weekly_history: list[dict[str, Any]],
+    current_start: pd.Timestamp,
+) -> list[dict[str, Any]]:
+    current_key = current_start.date().isoformat()
     return [
         {
             "week_start": row["week_start"],
@@ -441,7 +447,9 @@ def _trend(weekly_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "profit": row["profit"],
             "units": row["units"],
         }
-        for row in weekly_history[-8:]
+        for row in [
+            row for row in weekly_history if row["week_start"] <= current_key
+        ][-8:]
     ]
 
 
@@ -450,6 +458,7 @@ def _breakdown(
     prior: pd.DataFrame,
     dimension: str,
 ) -> list[dict[str, Any]]:
+    has_prior_period = not prior.empty
     current_grouped = (
         current.assign(label=current[dimension].fillna("Unspecified"))
         .groupby("label", dropna=False)
@@ -468,15 +477,16 @@ def _breakdown(
             prior_units=("quantity", lambda values: values.sum(min_count=1)),
         )
     )
-    combined = current_grouped.join(prior_grouped, how="outer").fillna(
-        {
-            "current_sales": 0,
-            "prior_sales": 0,
-        }
-    )
-    combined["sales_change"] = (
-        combined["current_sales"] - combined["prior_sales"]
-    )
+    combined = current_grouped.join(prior_grouped, how="outer")
+    combined["current_sales"] = combined["current_sales"].fillna(0)
+    if has_prior_period:
+        combined["prior_sales"] = combined["prior_sales"].fillna(0)
+        combined["sales_change"] = (
+            combined["current_sales"] - combined["prior_sales"]
+        )
+    else:
+        combined["prior_sales"] = np.nan
+        combined["sales_change"] = np.nan
     combined["sales_change_pct"] = np.where(
         combined["prior_sales"] != 0,
         combined["sales_change"] / combined["prior_sales"] * 100,
@@ -495,8 +505,16 @@ def _breakdown(
             {
                 "label": str(label),
                 "current_sales": float(row["current_sales"]),
-                "prior_sales": float(row["prior_sales"]),
-                "sales_change": float(row["sales_change"]),
+                "prior_sales": (
+                    None
+                    if pd.isna(row["prior_sales"])
+                    else float(row["prior_sales"])
+                ),
+                "sales_change": (
+                    None
+                    if pd.isna(row["sales_change"])
+                    else float(row["sales_change"])
+                ),
                 "sales_change_pct": (
                     None
                     if pd.isna(row["sales_change_pct"])
@@ -527,12 +545,22 @@ def _drivers(
 ) -> dict[str, list[dict[str, Any]]]:
     drivers: dict[str, list[dict[str, Any]]] = {}
     for dimension, rows in breakdowns.items():
-        ranked = sorted(rows, key=lambda row: row["sales_change"], reverse=True)
+        comparable = [
+            row for row in rows if row["sales_change"] is not None
+        ]
+        ranked = sorted(
+            comparable,
+            key=lambda row: row["sales_change"],
+            reverse=True,
+        )
         drivers[dimension] = {
             "increases": [row for row in ranked if row["sales_change"] > 0][:5],
             "declines": [
                 row
-                for row in sorted(rows, key=lambda row: row["sales_change"])
+                for row in sorted(
+                    comparable,
+                    key=lambda row: row["sales_change"],
+                )
                 if row["sales_change"] < 0
             ][:5],
         }
@@ -564,7 +592,11 @@ def _manager_summary(
         )
 
     for dimension in ("category", "store", "channel", "product"):
-        rows = breakdowns.get(dimension, [])
+        rows = [
+            row
+            for row in breakdowns.get(dimension, [])
+            if row["sales_change"] is not None
+        ]
         if rows:
             positive = max(rows, key=lambda row: row["sales_change"])
             if positive["sales_change"] > 0:
@@ -598,8 +630,31 @@ def build_report(
     bundle: AnalysisBundle,
     *,
     currency: str,
+    week_start: str | None = None,
 ) -> dict[str, Any]:
     analysis = bundle.analysis
+    latest_start, _, _, _ = complete_reporting_period(
+        analysis["transaction_date"]
+    )
+    weekly_history = _weekly_history(analysis, latest_start)
+    available_weeks = {
+        row["week_start"]
+        for row in weekly_history
+    }
+    if week_start is None:
+        selected_start = latest_start
+    else:
+        try:
+            selected_start = pd.Timestamp(week_start).normalize()
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Choose a complete reporting week available in this analysis."
+            ) from error
+        if selected_start.date().isoformat() not in available_weeks:
+            raise ValueError(
+                "Choose a complete reporting week available in this analysis."
+            )
+
     (
         current,
         prior,
@@ -607,7 +662,7 @@ def build_report(
         current_end,
         prior_start,
         prior_end,
-    ) = _period_frames(analysis)
+    ) = _period_frames(analysis, selected_start)
 
     current_sales = float(current["sales_amount"].sum())
     prior_sales = float(prior["sales_amount"].sum()) if len(prior) else None
@@ -694,7 +749,6 @@ def build_report(
             "high_discount_rows": int(len(high_discount)),
         }
 
-    weekly_history = _weekly_history(analysis, current_start)
     coverage = _coverage(bundle, current, prior, len(weekly_history))
     summary = _manager_summary(metrics, breakdowns, current, currency)
 
@@ -702,10 +756,11 @@ def build_report(
         "currency": currency,
         "week_start": current_start.date().isoformat(),
         "week_end": current_end.date().isoformat(),
+        "is_latest_week": current_start == latest_start,
         "prior_week_start": prior_start.date().isoformat(),
         "prior_week_end": prior_end.date().isoformat(),
         "metrics": metrics,
-        "trend": _trend(weekly_history),
+        "trend": _trend(weekly_history, current_start),
         "weekly_history": weekly_history,
         "breakdowns": breakdowns,
         "drivers": drivers,

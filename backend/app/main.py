@@ -11,12 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from app.analysis import (
+    AnalysisBundle,
     ColumnMap,
     build_report,
     build_verification,
     prepare_analysis,
     verification_export,
 )
+from app.session_cache import AnalysisSessionCache
 
 DEFAULT_MAX_UPLOAD_MB = 100
 SUPPORTED_SUFFIXES = {".csv", ".xlsx"}
@@ -82,6 +84,14 @@ def configured_max_upload_mb() -> int:
     except ValueError:
         return DEFAULT_MAX_UPLOAD_MB
     return value if value > 0 else DEFAULT_MAX_UPLOAD_MB
+
+
+def configured_positive_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def configured_cors_origins() -> list[str]:
@@ -256,6 +266,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+analysis_sessions = AnalysisSessionCache(
+    ttl_seconds=configured_positive_int("ANALYSIS_SESSION_TTL_SECONDS", 1800),
+    max_sessions=configured_positive_int("MAX_ANALYSIS_SESSIONS", 2),
+)
 
 
 @app.get("/api/health")
@@ -304,7 +318,7 @@ def analyze_frame(
     discount_column: str | None,
     cost_column: str | None,
     profit_column: str | None,
-) -> tuple[object, dict[str, object], dict[str, object]]:
+) -> AnalysisBundle:
     mappings = mappings_from_form(
         frame,
         date_column=date_column,
@@ -330,9 +344,31 @@ def analyze_frame(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     bundle.receipt["filename"] = filename
-    report = build_report(bundle, currency=currency)
+    return bundle
+
+
+def analysis_payload(
+    *,
+    analysis_id: str,
+    bundle: AnalysisBundle,
+    currency: str,
+    week_start: str | None = None,
+) -> dict[str, object]:
+    try:
+        report = build_report(
+            bundle,
+            currency=currency,
+            week_start=week_start,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     verification = build_verification(bundle, report, currency=currency)
-    return bundle, report, verification
+    return {
+        "analysis_id": analysis_id,
+        "receipt": bundle.receipt,
+        "report": report,
+        "verification": verification,
+    }
 
 
 @app.post("/api/analyze")
@@ -356,7 +392,7 @@ async def analyze_upload(
 ) -> dict[str, object]:
     data, suffix = await read_upload(file)
     frame = load_frame(data, suffix, sheet_name)
-    bundle, report, verification = analyze_frame(
+    bundle = analyze_frame(
         frame,
         filename=file.filename,
         currency=currency,
@@ -374,11 +410,68 @@ async def analyze_upload(
         cost_column=cost_column,
         profit_column=profit_column,
     )
-    return {
-        "receipt": bundle.receipt,
-        "report": report,
-        "verification": verification,
-    }
+    analysis_id = analysis_sessions.create(bundle, currency)
+    return analysis_payload(
+        analysis_id=analysis_id,
+        bundle=bundle,
+        currency=currency,
+    )
+
+
+@app.get("/api/analyses/{analysis_id}/reports/{week_start}")
+def selected_week_report(
+    analysis_id: str,
+    week_start: str,
+) -> dict[str, object]:
+    session = analysis_sessions.get(analysis_id)
+    if session is None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "This analysis session expired. Upload the file again to "
+                "continue reviewing its weekly reports."
+            ),
+        )
+    return analysis_payload(
+        analysis_id=analysis_id,
+        bundle=session.bundle,
+        currency=session.currency,
+        week_start=week_start,
+    )
+
+
+@app.get(
+    "/api/analyses/{analysis_id}/reports/{week_start}/verification.csv"
+)
+def selected_week_verification(
+    analysis_id: str,
+    week_start: str,
+) -> Response:
+    session = analysis_sessions.get(analysis_id)
+    if session is None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "This analysis session expired. Upload the file again to "
+                "download verification data."
+            ),
+        )
+    payload = analysis_payload(
+        analysis_id=analysis_id,
+        bundle=session.bundle,
+        currency=session.currency,
+        week_start=week_start,
+    )
+    export = verification_export(session.bundle, payload["report"])
+    return Response(
+        content=export.to_csv(index=False),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="salescope-{week_start}-verification.csv"'
+            )
+        },
+    )
 
 
 @app.post("/api/verification.csv")
@@ -402,7 +495,7 @@ async def download_verification(
 ) -> Response:
     data, suffix = await read_upload(file)
     frame = load_frame(data, suffix, sheet_name)
-    bundle, report, _ = analyze_frame(
+    bundle = analyze_frame(
         frame,
         filename=file.filename,
         currency=currency,
@@ -420,6 +513,7 @@ async def download_verification(
         cost_column=cost_column,
         profit_column=profit_column,
     )
+    report = build_report(bundle, currency=currency)
     export = verification_export(bundle, report)
     return Response(
         content=export.to_csv(index=False),

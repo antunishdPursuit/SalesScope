@@ -70,8 +70,8 @@ type WeeklyHistoryRow = TrendRow & {
 type BreakdownRow = {
   label: string
   current_sales: number
-  prior_sales: number
-  sales_change: number
+  prior_sales: number | null
+  sales_change: number | null
   sales_change_pct: number | null
   current_profit: number | null
   margin_pct: number | null
@@ -89,6 +89,7 @@ type Report = {
   currency: string
   week_start: string
   week_end: string
+  is_latest_week: boolean
   prior_week_start: string
   prior_week_end: string
   metrics: {
@@ -171,6 +172,7 @@ type Verification = {
 }
 
 type Analysis = {
+  analysis_id: string
   receipt: Receipt
   report: Report
   verification: Verification
@@ -308,6 +310,7 @@ function App() {
   const [activeDimension, setActiveDimension] = useState('category')
   const [copyStatus, setCopyStatus] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
+  const [isSwitchingWeek, setIsSwitchingWeek] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [loadingStage, setLoadingStage] = useState<'reading' | 'analyzing' | null>(null)
   const [loadingMessage, setLoadingMessage] = useState('')
@@ -315,6 +318,7 @@ function App() {
   const [backendReadiness, setBackendReadiness] =
     useState<BackendReadiness>('checking')
   const fileInput = useRef<HTMLInputElement>(null)
+  const reportCache = useRef(new Map<string, Analysis>())
 
   useEffect(() => {
     let cancelled = false
@@ -447,6 +451,7 @@ function App() {
       ) as Mappings,
     )
     setExcludeDuplicates(false)
+    reportCache.current.clear()
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -476,6 +481,7 @@ function App() {
     setLoadingMessage('Reading your file…')
     setError('')
     setAnalysis(null)
+    reportCache.current.clear()
     setView('prepare')
     setFile(selectedFile)
     try {
@@ -542,6 +548,8 @@ function App() {
       })
       if (!response.ok) throw new Error(await readError(response))
       const nextAnalysis: Analysis = await response.json()
+      reportCache.current.clear()
+      reportCache.current.set(nextAnalysis.report.week_start, nextAnalysis)
       setAnalysis(nextAnalysis)
       setActiveDimension(
         ['category', 'store', 'product', 'channel', 'region'].find(
@@ -574,8 +582,55 @@ function App() {
     setActiveDimension('category')
     setCopyStatus('')
     setIsDownloading(false)
+    setIsSwitchingWeek(false)
     setError('')
+    reportCache.current.clear()
     fileInput.current?.focus()
+  }
+
+  async function selectReportWeek(weekStart: string) {
+    if (!analysis) return
+    if (weekStart === analysis.report.week_start) return
+
+    setCopyStatus('')
+    setError('')
+    const cached = reportCache.current.get(weekStart)
+    if (cached) {
+      setAnalysis(cached)
+      setActiveDimension(
+        ['category', 'store', 'product', 'channel', 'region'].find(
+          (dimension) => cached.report.breakdowns[dimension]?.length,
+        ) ?? '',
+      )
+      return
+    }
+
+    setIsSwitchingWeek(true)
+    try {
+      const response = await fetch(
+        `${API_URL}/api/analyses/${encodeURIComponent(
+          analysis.analysis_id,
+        )}/reports/${encodeURIComponent(weekStart)}`,
+        { cache: 'no-store' },
+      )
+      if (!response.ok) throw new Error(await readError(response))
+      const selectedAnalysis: Analysis = await response.json()
+      reportCache.current.set(weekStart, selectedAnalysis)
+      setAnalysis(selectedAnalysis)
+      setActiveDimension(
+        ['category', 'store', 'product', 'channel', 'region'].find(
+          (dimension) => selectedAnalysis.report.breakdowns[dimension]?.length,
+        ) ?? '',
+      )
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError))
+    } finally {
+      setIsSwitchingWeek(false)
+    }
+  }
+
+  function handleWeekChange(event: ChangeEvent<HTMLSelectElement>) {
+    void selectReportWeek(event.target.value)
   }
 
   async function copyManagerSummary() {
@@ -595,10 +650,14 @@ function App() {
     setIsDownloading(true)
     setError('')
     try {
-      const response = await fetch(`${API_URL}/api/verification.csv`, {
-        method: 'POST',
-        body: buildAnalysisForm(),
-      })
+      const response = await fetch(
+        `${API_URL}/api/analyses/${encodeURIComponent(
+          analysis.analysis_id,
+        )}/reports/${encodeURIComponent(
+          analysis.report.week_start,
+        )}/verification.csv`,
+        { cache: 'no-store' },
+      )
       if (!response.ok) throw new Error(await readError(response))
       const blob = await response.blob()
       const downloadUrl = URL.createObjectURL(blob)
@@ -936,7 +995,10 @@ function App() {
       )}
 
       {view === 'report' && analysis && (
-        <main className="main-content report-page">
+        <main
+          className="main-content report-page"
+          aria-busy={isSwitchingWeek}
+        >
           <div className="report-heading">
             <div>
               <div className="eyebrow">Weekly sales report</div>
@@ -947,9 +1009,36 @@ function App() {
                 )}
               </h1>
               <p>
-                Latest complete Monday-through-Sunday period in{' '}
+                {analysis.report.is_latest_week ? 'Latest' : 'Selected'} complete
+                Monday-through-Sunday period in{' '}
                 {analysis.receipt.filename}.
               </p>
+              <div className="report-week-control">
+                <label htmlFor="report-week">Report week</label>
+                <select
+                  id="report-week"
+                  value={analysis.report.week_start}
+                  onChange={handleWeekChange}
+                  disabled={isSwitchingWeek}
+                >
+                  {[...analysis.report.weekly_history].reverse().map((row) => (
+                    <option key={row.week_start} value={row.week_start}>
+                      {formatDateRange(row.week_start, row.week_end)}
+                      {row.week_start ===
+                      analysis.report.weekly_history.at(-1)?.week_start
+                        ? ' — Latest'
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+                <span role="status" aria-live="polite">
+                  {isSwitchingWeek
+                    ? 'Loading the selected week…'
+                    : `${formatNumber(
+                        analysis.report.weekly_history.length,
+                      )} complete weeks available`}
+                </span>
+              </div>
             </div>
             <div className="report-heading__actions">
               <button
@@ -974,6 +1063,13 @@ function App() {
               </button>
             </div>
           </div>
+
+          {error && (
+            <div className="notice notice--error" role="alert">
+              <strong>We could not load that reporting week.</strong>
+              <span>{error}</span>
+            </div>
+          )}
 
           <section className="kpi-grid" aria-label="Weekly performance summary">
             <KpiCard
@@ -1058,6 +1154,7 @@ function App() {
                   rows={analysis.report.weekly_history}
                   currency={analysis.report.currency}
                   currentWeekStart={analysis.report.week_start}
+                  onSelectWeek={(weekStart) => void selectReportWeek(weekStart)}
                 />
               </details>
             </section>
@@ -1634,7 +1731,7 @@ function DriverList({
               <span>{row.label}</span>
               <strong className={decline ? 'is-negative' : 'is-positive'}>
                 {decline ? '−' : '+'}
-                {formatCurrency(Math.abs(row.sales_change), currency)}
+                {formatCurrency(Math.abs(row.sales_change ?? 0), currency)}
               </strong>
             </li>
           ))}
@@ -1683,10 +1780,28 @@ function BreakdownTable({
                 />
               </th>
               <td>{formatCurrency(row.current_sales, currency)}</td>
-              <td>{formatCurrency(row.prior_sales, currency)}</td>
-              <td className={row.sales_change >= 0 ? 'is-positive' : 'is-negative'}>
-                {row.sales_change >= 0 ? '+' : '−'}
-                {formatCurrency(Math.abs(row.sales_change), currency)}
+              <td>
+                {row.prior_sales === null
+                  ? '—'
+                  : formatCurrency(row.prior_sales, currency)}
+              </td>
+              <td
+                className={
+                  row.sales_change === null
+                    ? undefined
+                    : row.sales_change >= 0
+                      ? 'is-positive'
+                      : 'is-negative'
+                }
+              >
+                {row.sales_change === null ? (
+                  'No prior week'
+                ) : (
+                  <>
+                    {row.sales_change >= 0 ? '+' : '−'}
+                    {formatCurrency(Math.abs(row.sales_change), currency)}
+                  </>
+                )}
               </td>
               {hasProfit && (
                 <td>
@@ -1710,10 +1825,12 @@ function WeeklyHistoryTable({
   rows,
   currency,
   currentWeekStart,
+  onSelectWeek,
 }: {
   rows: WeeklyHistoryRow[]
   currency: string
   currentWeekStart: string
+  onSelectWeek: (weekStart: string) => void
 }) {
   const newestFirst = [...rows].reverse()
   const hasProfit = rows.some((row) => row.profit !== null)
@@ -1745,7 +1862,17 @@ function WeeklyHistoryTable({
             return (
               <tr className={isCurrent ? 'is-current' : undefined} key={row.week_start}>
                 <th className="week-label" scope="row">
-                  <strong>{formatDateRange(row.week_start, row.week_end)}</strong>
+                  {isCurrent ? (
+                    <strong>{formatDateRange(row.week_start, row.week_end)}</strong>
+                  ) : (
+                    <button
+                      className="weekly-history-week-button"
+                      type="button"
+                      onClick={() => onSelectWeek(row.week_start)}
+                    >
+                      {formatDateRange(row.week_start, row.week_end)}
+                    </button>
+                  )}
                   {isCurrent && <small>Current report</small>}
                 </th>
                 <td>{formatCurrency(row.sales, currency)}</td>
